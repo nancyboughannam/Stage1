@@ -24,7 +24,7 @@ def safe_log2_ratio(num: float, den: float) -> float:
 
 
 def compute_rates(g: np.ndarray, b: np.ndarray, p: np.ndarray, N0: float) -> np.ndarray:
-    """Compute communication rate for each device using a numerically safe form."""
+    """Compute communication rate using a numerically safe, physically consistent model."""
     b_safe = np.maximum(np.asarray(b, dtype=float), 0.0)
     p_safe = np.maximum(np.asarray(p, dtype=float), 0.0)
     g_safe = np.maximum(np.asarray(g, dtype=float), 0.0)
@@ -41,10 +41,32 @@ def thermal_step(
     tau: float,
     dt: float,
 ) -> np.ndarray:
-    """Explicit first-order thermal update. The heating term is action dependent."""
+    """Compute the explicit first-order thermal update for a single slot."""
     T = np.asarray(T, dtype=float)
     heating = np.asarray(heating, dtype=float)
     return T_amb + (T - T_amb) * np.exp(-dt / max(tau, EPS)) + heating * alpha * dt
+
+
+def compute_thermal_heating(action: Dict[str, np.ndarray], params: Dict[str, Any]) -> np.ndarray:
+    f = np.maximum(0.0, np.asarray(action.get("f", np.zeros_like(action.get("l", []))), dtype=float))
+    p = np.maximum(0.0, np.asarray(action.get("p", np.zeros_like(action.get("l", []))), dtype=float))
+    f_scale = np.asarray(params.get("f_hw_max", np.ones_like(f)), dtype=float)
+    p_scale = np.asarray(params.get("p_hw_max", np.ones_like(p)), dtype=float)
+    heating = 0.7 * f / np.maximum(f_scale, EPS)
+    heating += 0.3 * p / np.maximum(p_scale, EPS)
+    return heating
+
+
+def predict_next_temperature(T: np.ndarray, action: Dict[str, np.ndarray], params: Dict[str, Any]) -> np.ndarray:
+    heating = compute_thermal_heating(action, params)
+    return thermal_step(
+        T,
+        float(params.get("ambient_temp", 25.0)),
+        heating=heating,
+        alpha=float(params.get("thermal_alpha", 0.15)),
+        tau=float(params.get("thermal_tau", 12.0)),
+        dt=float(params["delta"]),
+    )
 
 
 def normalize_action(action: Dict[str, np.ndarray], params: Dict[str, Any]) -> Dict[str, np.ndarray]:
@@ -59,16 +81,15 @@ def normalize_action(action: Dict[str, np.ndarray], params: Dict[str, Any]) -> D
     return out
 
 
-def apply_transition(
+def transition_metrics(
     state: Dict[str, np.ndarray],
     action: Dict[str, np.ndarray],
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Apply the simulator transition model for the given action."""
+    """Shared simulator interface used for both transition execution and constraint checks."""
     Q = np.asarray(state["Q"], dtype=float)
     B = np.asarray(state["B"], dtype=float)
     T = np.asarray(state["T"], dtype=float)
-    A = np.asarray(state["A"], dtype=float)
     g = np.asarray(state["g"], dtype=float)
     N0 = float(params.get("N0", 1e-12))
 
@@ -86,30 +107,18 @@ def apply_transition(
     kappa = np.asarray(params["kappa"], dtype=float)
     baseline = np.asarray(params.get("baseline_power", np.zeros_like(Q)), dtype=float)
 
-    local_time = np.divide(c * l, np.maximum(f, EPS), out=np.zeros_like(Q), where=f > 0)
+    local_time = np.where(l > 0.0, c * l / np.maximum(f, EPS), 0.0)
     tx_rate = compute_rates(g, b, p, N0)
-    tx_time = np.divide(d * o, np.maximum(tx_rate, EPS), out=np.zeros_like(Q), where=tx_rate > 0)
-    edge_time = np.divide(c * o, np.maximum(f_edge, EPS), out=np.zeros_like(Q), where=f_edge > 0)
+    tx_time = np.where(o > 0.0, d * o / np.maximum(tx_rate, EPS), 0.0)
+    edge_time = np.where(o > 0.0, c * o / np.maximum(f_edge, EPS), 0.0)
 
-    local_energy = kappa * np.power(f, 3.0) * local_time
-    tx_energy = p * tx_time
+    local_energy = np.where(f > 0.0, kappa * np.power(f, 3.0) * local_time, 0.0)
+    tx_energy = np.where(tx_rate > 0.0, p * tx_time, 0.0)
     total_energy = local_energy + tx_energy + baseline * delta
     next_B = B - total_energy
     next_Q = Q - l - o + U
 
-    f_scale = np.asarray(params.get("f_hw_max", np.ones_like(f)), dtype=float)
-    p_scale = np.asarray(params.get("p_hw_max", np.ones_like(p)), dtype=float)
-    heating = 0.7 * np.maximum(f, 0.0) / np.maximum(f_scale, EPS)
-    heating += 0.3 * np.maximum(p, 0.0) / np.maximum(p_scale, EPS)
-    T_next = thermal_step(
-        T,
-        float(params.get("ambient_temp", 25.0)),
-        heating=heating,
-        alpha=float(params.get("thermal_alpha", 0.15)),
-        tau=float(params.get("thermal_tau", 12.0)),
-        dt=delta,
-    )
-
+    T_next = predict_next_temperature(T, action, params)
     info = {
         "local_time": local_time,
         "tx_time": tx_time,
@@ -120,8 +129,32 @@ def apply_transition(
         "queue_next": next_Q,
         "battery_next": next_B,
         "temperature_next": T_next,
+        "total_energy": total_energy,
+        "shared_bw_used": np.sum(b),
+        "shared_edge_cpu_used": np.sum(f_edge),
     }
-    return {"Q": next_Q, "B": next_B, "T": T_next, "g": g, "A": A, "metrics": info}
+    return info
+
+
+def apply_transition(
+    state: Dict[str, np.ndarray],
+    action: Dict[str, np.ndarray],
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Apply the simulator transition model for the given action."""
+    info = transition_metrics(state, action, params)
+    Q = np.asarray(state["Q"], dtype=float)
+    A = np.asarray(state["A"], dtype=float)
+    g = np.asarray(state["g"], dtype=float)
+    next_state = {
+        "Q": info["queue_next"],
+        "B": info["battery_next"],
+        "T": info["temperature_next"],
+        "g": g,
+        "A": A,
+        "metrics": info,
+    }
+    return next_state
 
 
 def queue_capacity_margin(Q: np.ndarray, Q_max: np.ndarray) -> np.ndarray:

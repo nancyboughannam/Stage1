@@ -1,4 +1,5 @@
 import numpy as np
+from stable_baselines3 import PPO
 
 from mlbac_stage1.env import make_env
 
@@ -6,17 +7,14 @@ from mlbac_stage1.env import make_env
 def test_ppo_smoke_training_runs():
     env = make_env(
         n_devices=1,
-        horizon=5,
+        horizon=4,
         deterministic=True,
         use_ppo=True,
-        max_steps=8,
         action_scale=1.0,
     )
     obs, _ = env.reset(seed=7)
-    for _ in range(6):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        if terminated or truncated:
-            obs, _ = env.reset(seed=7)
-    assert obs.shape == (7 * 1 + 4,)
-    assert np.isfinite(reward)
+    model = PPO("MlpPolicy", env, n_steps=8, batch_size=8, seed=0, verbose=0)
+    model.learn(total_timesteps=32)
+    action, _ = model.predict(obs, deterministic=True)
+    assert action.shape == (7,)
+    assert np.isfinite(np.asarray(action, dtype=float)).all()

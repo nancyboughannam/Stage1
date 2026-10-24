@@ -22,6 +22,10 @@ python demo_stage1.py
 - temperature stays under the thermal limit
 - safety filter steps from nominal to corrected or safe fallback action when necessary
 
+## Thermal model note
+
+The default thermal coefficients in the repository are intentionally synthetic and uncalibrated. They are not hardware-validated parameters and are used only to exercise the model logic, safety-layer checks, and reporting semantics. Any real-world safety claims require a calibrated thermal model and measured device data.
+
 ## Main modules
 
 - `mlbac_stage1/env.py`: Gymnasium environment wrapper
