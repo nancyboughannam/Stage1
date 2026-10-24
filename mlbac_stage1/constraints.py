@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 import numpy as np
 
-from .models import compute_rates, predict_next_temperature
+from .models import compute_rates, predict_next_temperature, thermal_peak_temperature
 
 
 EPS = 1e-12
@@ -54,9 +54,9 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     edge_ok = np.sum(f_edge) <= params["shared_edge_cpu"] + 1e-9
 
     rate = compute_rates(g, b, p, N0)
-    t_local = np.divide(c * l, np.maximum(f, EPS), out=np.zeros_like(Q), where=f > 0)
-    t_tx = np.divide(d * o, np.maximum(rate, EPS), out=np.zeros_like(Q), where=(rate > 0.0) & (o > 0.0))
-    t_edge = np.divide(c * o, np.maximum(f_edge, EPS), out=np.zeros_like(Q), where=(f_edge > 0.0) & (o > 0.0))
+    t_local = np.divide(c * l, f, out=np.zeros_like(Q), where=f > 0)
+    t_tx = np.divide(d * o, rate, out=np.zeros_like(Q), where=(rate > 0.0) & (o > 0.0))
+    t_edge = np.divide(c * o, f_edge, out=np.zeros_like(Q), where=(f_edge > 0.0) & (o > 0.0))
     timing_ok = (t_local <= delta + 1e-9) & ((t_tx + t_edge) <= delta + 1e-9)
 
     # Explicitly reject positive work if the required processing resource is absent.
@@ -74,7 +74,8 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     battery_cap_ok = (battery_after <= B_cap + 1e-9)
 
     predicted_T = predict_next_temperature(T, action, params)
-    temp_ok = (predicted_T <= T_max + 1e-9)
+    predicted_peak_T = thermal_peak_temperature(T, action, params)
+    temp_ok = (predicted_peak_T <= T_max + 1e-9)
     next_queue = Q - l - o + U
     queue_cap_ok = (next_queue <= Q_max + 1e-9)
 
@@ -97,7 +98,7 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     metrics = {
         "queue_slack": float(np.min(Q_max - next_queue)) if next_queue.size else 0.0,
         "battery_slack": float(np.min(battery_after - B_min)) if battery_after.size else 0.0,
-        "temp_slack": float(np.min(T_max - predicted_T)) if predicted_T.size else 0.0,
+        "temp_slack": float(np.min(T_max - predicted_peak_T)) if predicted_peak_T.size else 0.0,
         "local_time_max": float(np.max(t_local)) if t_local.size else 0.0,
         "tx_plus_edge_max": float(np.max(t_tx + t_edge)) if (t_tx + t_edge).size else 0.0,
         "rate": float(np.max(rate)) if rate.size else 0.0,
@@ -121,14 +122,62 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
             "work_without_transmission": _bad_indices(positive_tx),
             "magnitudes": {
                 "queue_excess": float(np.max(np.maximum(0.0, next_queue - Q_max))) if next_queue.size else 0.0,
+                "queue_work_excess": float(np.max(np.maximum(0.0, l + o - Q))) if Q.size else 0.0,
+                "admission_excess": float(np.max(np.maximum(0.0, U - A))) if A.size else 0.0,
                 "battery_deficit": float(np.max(np.maximum(0.0, B_min - battery_after))) if battery_after.size else 0.0,
+                "battery_overflow": float(np.max(np.maximum(0.0, battery_after - B_cap))) if battery_after.size else 0.0,
                 "temperature_excess": float(np.max(np.maximum(0.0, predicted_T - T_max))) if predicted_T.size else 0.0,
+                "temperature_peak_excess": float(np.max(np.maximum(0.0, predicted_peak_T - T_max))) if predicted_peak_T.size else 0.0,
+                "local_cpu_excess_hz": float(np.max(np.maximum(0.0, f - f_hw_max))) if f.size else 0.0,
+                "transmit_power_excess_w": float(np.max(np.maximum(0.0, p - p_hw_max))) if p.size else 0.0,
                 "shared_bw_excess": float(max(0.0, np.sum(b) - params["shared_bw"])) if np.size(b) else 0.0,
                 "shared_edge_excess": float(max(0.0, np.sum(f_edge) - params["shared_edge_cpu"])) if np.size(f_edge) else 0.0,
                 "timing_excess": float(np.max(np.maximum(0.0, np.maximum(t_local, t_tx + t_edge) - delta))) if Q.size else 0.0,
+                "local_work_without_cpu": float(np.sum(positive_local)),
+                "offload_work_without_path": float(np.sum(positive_tx)),
             },
         },
         "metrics": metrics,
         "predicted_temperature": predicted_T,
+        "predicted_peak_temperature": predicted_peak_T,
+        "predicted_state": {"Q": next_queue, "B": battery_after, "T": predicted_T},
     }
     return report
+
+
+def evaluate_post_transition(
+    post_state: Dict[str, np.ndarray],
+    transition_metrics: Dict[str, Any],
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Verify recorded actual state and transition peak without rerunning prediction."""
+    queue = np.asarray(post_state["Q"], dtype=float)
+    battery = np.asarray(post_state["B"], dtype=float)
+    temperature = np.asarray(post_state["T"], dtype=float)
+    peak_temperature = np.asarray(transition_metrics.get("peak_temp", temperature), dtype=float)
+    queue_max = np.asarray(params["Q_max"], dtype=float)
+    battery_min = np.asarray(params["B_min"], dtype=float)
+    temperature_max = np.asarray(params["T_max"], dtype=float)
+    queue_flag = queue > queue_max + 1e-9
+    battery_flag = battery < battery_min - 1e-9
+    temperature_flag = temperature > temperature_max + 1e-9
+    peak_flag = peak_temperature > temperature_max + 1e-9
+    flags = {
+        "queue_capacity": _bad_indices(queue_flag),
+        "battery_reserve": _bad_indices(battery_flag),
+        "temperature_endpoint": _bad_indices(temperature_flag),
+        "temperature_peak": _bad_indices(peak_flag),
+    }
+    magnitudes = {
+        "queue_excess_work_units": float(np.max(np.maximum(0.0, queue - queue_max))) if queue.size else 0.0,
+        "battery_reserve_deficit_j": float(np.max(np.maximum(0.0, battery_min - battery))) if battery.size else 0.0,
+        "temperature_endpoint_excess_c": float(np.max(np.maximum(0.0, temperature - temperature_max))) if temperature.size else 0.0,
+        "temperature_peak_excess_c": float(np.max(np.maximum(0.0, peak_temperature - temperature_max))) if peak_temperature.size else 0.0,
+    }
+    return {
+        "feasible": not any(flags.values()),
+        "flags": flags,
+        "magnitudes": magnitudes,
+        "actual_state": {"Q": queue.copy(), "B": battery.copy(), "T": temperature.copy()},
+        "actual_peak_temperature": peak_temperature.copy(),
+    }

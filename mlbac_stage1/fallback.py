@@ -6,7 +6,7 @@ import numpy as np
 
 
 class FallbackController:
-    """Minimal fallback policy representing sleep/shutdown mode."""
+    """One-slot idle action; baseline energy consumption continues."""
 
     def __init__(self, params: Dict[str, Any]):
         self.params = params
@@ -24,10 +24,14 @@ class FallbackController:
         }
 
     def describe(self) -> Dict[str, Any]:
+        baseline = np.asarray(self.params.get("baseline_power", []), dtype=float)
+        delta = float(self.params.get("delta", 1.0))
         return {
-            "entry_energy": 0.0,
-            "duration": 1.0,
-            "ongoing_power": 0.0,
+            "mode": "idle",
+            "entry_energy_j": 0.0,
+            "verification_scope": "one_step_only",
+            "ongoing_power_w": baseline.copy(),
+            "one_step_baseline_energy_j": baseline * delta,
             "queue_retention": "retained",
-            "resume": "manual",
+            "remaining_horizon_verified": False,
         }

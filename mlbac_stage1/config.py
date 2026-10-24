@@ -11,7 +11,7 @@ def make_default_params(n_devices: int = 1, *, deterministic: bool = False) -> D
     b_min = np.full(n_devices, 0.10 * 9.0 * 3600.0, dtype=float)
     t_max = np.full(n_devices, 80.0, dtype=float)
     a_max = np.full(n_devices, 1.0, dtype=float)
-    d = np.full(n_devices, 0.2e6, dtype=float)
+    d = np.full(n_devices, 0.2 * 1_000_000 * 8, dtype=float)
     c = np.full(n_devices, 40e6, dtype=float)
     f_hw_max = np.full(n_devices, 1.0e9, dtype=float)
     p_hw_max = np.full(n_devices, 1.0, dtype=float)
@@ -44,9 +44,13 @@ def make_default_params(n_devices: int = 1, *, deterministic: bool = False) -> D
         "N0": 1e-12,
         "g_seed": 42,
         "g_base": g_base,
-        "queue_capacity_margin": 0.05,
-        "temperature_margin": 0.05,
-        "energy_margin": 0.05,
+        "observation_temperature_scale_c": 100.0,
+        "observation_channel_gain_scale": 1e-5,
+        "observation_bandwidth_scale_bps": 10e6,
+        "observation_edge_cpu_scale_hz": 10e9,
+        "controller_failure_penalty": 10.0,
+        "actual_violation_penalty": 10.0,
+        "task_size_description": "0.2 decimal MB = 1,600,000 bits",
     }
     return params
 

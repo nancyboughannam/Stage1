@@ -8,7 +8,7 @@ from .constraints import evaluate_constraints
 
 
 class SafetyFilter:
-    """A conservative hard-safety filter that trims a nominal action until it satisfies the Stage 1 constraints."""
+    """A heuristic action-scaling search that returns one-step model-verified candidates."""
 
     def __init__(self, params: Dict[str, Any]):
         self.params = params
@@ -66,17 +66,20 @@ class SafetyFilter:
             cand["f_edge"] = factor * np.minimum(cand["f_edge"], float(self.params["shared_edge_cpu"]))
         return cand
 
-    def filter_action(self, state: Dict[str, np.ndarray], action: Dict[str, np.ndarray], *, barrier_mode: bool = False) -> Dict[str, Any]:
-        """Return a safe action and honest status label."""
+    def filter_action(self, state: Dict[str, np.ndarray], action: Dict[str, np.ndarray]) -> Dict[str, Any]:
+        """Return a one-step verified candidate or an explicit verification failure."""
+        proposal_report = evaluate_constraints(state, action, self.params)
         nominal = self._normalize_action(action)
         report = evaluate_constraints(state, nominal, self.params)
         if report["feasible"]:
-            return {"action": nominal, "safe": True, "status": "nominal_accepted", "report": report}
+            changed = any(not np.array_equal(np.asarray(action[k]), nominal[k]) for k in nominal)
+            status = "preprocessed_candidate_verified" if changed else "nominal_accepted"
+            return {"action": nominal, "safe": True, "status": status, "verification_scope": "one_step", "report": report, "proposal_report": proposal_report, "infeasibility_proven": False}
 
         corrected = self._candidate_from_nominal(state, nominal)
         corrected_report = evaluate_constraints(state, corrected, self.params)
         if corrected_report["feasible"]:
-            return {"action": corrected, "safe": True, "status": "corrected_candidate_verified", "report": corrected_report}
+            return {"action": corrected, "safe": True, "status": "corrected_candidate_verified", "verification_scope": "one_step", "report": corrected_report, "proposal_report": proposal_report, "infeasibility_proven": False}
 
         shutdown = {
             "f": np.zeros_like(np.asarray(state["Q"], dtype=float)),
@@ -89,5 +92,14 @@ class SafetyFilter:
         }
         fallback_report = evaluate_constraints(state, shutdown, self.params)
         if fallback_report["feasible"]:
-            return {"action": shutdown, "safe": True, "status": "fallback_verified", "report": fallback_report}
-        return {"action": shutdown, "safe": False, "status": "no_verified_safe_continuation", "report": fallback_report}
+            return {"action": shutdown, "safe": True, "status": "fallback_verified", "verification_scope": "one_step", "report": fallback_report, "proposal_report": proposal_report, "infeasibility_proven": False}
+        return {
+            "action": None,
+            "safe": False,
+            "status": "no_verified_safe_continuation",
+            "verification_scope": "one_step",
+            "failure_kind": "no_verified_candidate_found",
+            "infeasibility_proven": False,
+            "report": fallback_report,
+            "proposal_report": proposal_report,
+        }

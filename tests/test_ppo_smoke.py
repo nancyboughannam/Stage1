@@ -9,7 +9,6 @@ def test_ppo_smoke_training_runs():
         n_devices=1,
         horizon=4,
         deterministic=True,
-        use_ppo=True,
         action_scale=1.0,
     )
     obs, _ = env.reset(seed=7)

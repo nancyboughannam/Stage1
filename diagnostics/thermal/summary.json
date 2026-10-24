@@ -1,0 +1,116 @@
+{
+  "actual_feasible": true,
+  "actual_outcome": "observed",
+  "actual_peak_temperature_c": [
+    79.0
+  ],
+  "actual_state": {
+    "A": [
+      0.3
+    ],
+    "B": [
+      25918.999979945373
+    ],
+    "Q": [
+      0.99463129088
+    ],
+    "T": [
+      78.74114248470346
+    ],
+    "g": [
+      1e-05
+    ]
+  },
+  "actual_violation_magnitudes": {
+    "battery_reserve_deficit_j": 0.0,
+    "queue_excess_work_units": 0.0,
+    "temperature_endpoint_excess_c": 0.0,
+    "temperature_peak_excess_c": 0.0
+  },
+  "controller_failure": false,
+  "description": "Synthetic thermal stress; the nominal action is hardware-admissible and otherwise feasible but exceeds predicted T_max.",
+  "elapsed_time_s": 1.0,
+  "ending_reason": "finite_horizon_complete",
+  "failure_kind": null,
+  "filter_status": "corrected_candidate_verified",
+  "infeasibility_proven": false,
+  "initial_state": {
+    "A": [
+      0.0
+    ],
+    "B": [
+      25920.0
+    ],
+    "Q": [
+      1.0
+    ],
+    "T": [
+      79.0
+    ],
+    "g": [
+      1e-05
+    ]
+  },
+  "intervention": true,
+  "one_step_verification": "verified_one_step",
+  "outstanding_arrival_work_units_at_controller_failure": null,
+  "outstanding_queue_work_units_at_controller_failure": null,
+  "predicted_state": {
+    "B": [
+      25918.999979945373
+    ],
+    "Q": [
+      0.99463129088
+    ],
+    "T": [
+      78.74114248470346
+    ]
+  },
+  "predicted_violation_magnitudes": {
+    "admission_excess": 0.0,
+    "battery_deficit": 0.0,
+    "battery_overflow": 0.0,
+    "local_cpu_excess_hz": 0.0,
+    "local_work_without_cpu": 0.0,
+    "offload_work_without_path": 0.0,
+    "queue_excess": 0.0,
+    "queue_work_excess": 0.0,
+    "shared_bw_excess": 0.0,
+    "shared_edge_excess": 0.0,
+    "temperature_excess": 32.48239838998346,
+    "temperature_peak_excess": 32.48239838998346,
+    "timing_excess": 0.0,
+    "transmit_power_excess_w": 0.0
+  },
+  "proposal_predicted_feasible": false,
+  "reward": -0.009946312908800001,
+  "scenario": "thermal",
+  "seed": 0,
+  "selected_candidate_predicted_feasible": true,
+  "slots_attempted": 1,
+  "slots_executed": 1,
+  "terminated": true,
+  "thermal_model_note": "Peak is max(start, endpoint) for the first-order endpoint model; continuous within-slot transients are not resolved.",
+  "thermal_stress_parameters": {
+    "ambient_c": 25.0,
+    "discrete_equilibrium_c_at_max_heating": 775.4166184493308,
+    "maximum_normalized_heating": 1.0,
+    "synthetic_uncalibrated": true,
+    "tau_s": 12.0,
+    "thermal_alpha_c_per_s_per_normalized_load": 60.0
+  },
+  "thresholds": {
+    "B_min_j": [
+      3240.0
+    ],
+    "Q_max_work_units": [
+      10.0
+    ],
+    "T_max_c": [
+      80.0
+    ]
+  },
+  "total_outstanding_work_units_at_controller_failure": null,
+  "truncated": false,
+  "verification_scope": "one_step"
+}

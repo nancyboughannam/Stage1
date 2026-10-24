@@ -24,13 +24,13 @@ def test_safe_action_passes_through():
     }
     params = {
         "Q_max": np.array([10.0]),
-        "B_min": np.array([0.9 * 9 * 3600]),
+        "B_min": np.array([0.1 * 9 * 3600]),
         "T_max": np.array([80.0]),
         "B_cap": np.array([9 * 3600]),
         "shared_bw": 10e6,
         "shared_edge_cpu": 10e9,
         "delta": 1.0,
-        "d": np.array([0.2e6]),
+        "d": np.array([1.6e6]),
         "c": np.array([40e6]),
         "f_hw_max": np.array([1e9]),
         "p_hw_max": np.array([1.0]),
@@ -61,13 +61,13 @@ def test_unsafe_action_is_corrected():
     }
     params = {
         "Q_max": np.array([10.0]),
-        "B_min": np.array([0.9 * 9 * 3600]),
+        "B_min": np.array([0.1 * 9 * 3600]),
         "T_max": np.array([80.0]),
         "B_cap": np.array([9 * 3600]),
         "shared_bw": 10e6,
         "shared_edge_cpu": 10e9,
         "delta": 1.0,
-        "d": np.array([0.2e6]),
+        "d": np.array([1.6e6]),
         "c": np.array([40e6]),
         "f_hw_max": np.array([1e9]),
         "p_hw_max": np.array([1.0]),
@@ -100,13 +100,13 @@ def test_queue_and_energy_conservation_snapshot():
     }
     params = {
         "Q_max": np.array([10.0]),
-        "B_min": np.array([0.9 * 9 * 3600]),
+        "B_min": np.array([0.1 * 9 * 3600]),
         "T_max": np.array([80.0]),
         "B_cap": np.array([9 * 3600]),
         "shared_bw": 10e6,
         "shared_edge_cpu": 10e9,
         "delta": 1.0,
-        "d": np.array([0.2e6]),
+        "d": np.array([1.6e6]),
         "c": np.array([40e6]),
         "f_hw_max": np.array([1e9]),
         "p_hw_max": np.array([1.0]),

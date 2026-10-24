@@ -69,6 +69,13 @@ def predict_next_temperature(T: np.ndarray, action: Dict[str, np.ndarray], param
     )
 
 
+def thermal_peak_temperature(T: np.ndarray, action: Dict[str, np.ndarray], params: Dict[str, Any]) -> np.ndarray:
+    """Peak under the slot's monotone first-order thermal trajectory (an endpoint check)."""
+    start = np.asarray(T, dtype=float)
+    end = predict_next_temperature(start, action, params)
+    return np.maximum(start, end)
+
+
 def normalize_action(action: Dict[str, np.ndarray], params: Dict[str, Any]) -> Dict[str, np.ndarray]:
     out = {key: np.asarray(action[key], dtype=float).copy() for key in ["f", "p", "b", "f_edge", "l", "o", "U"]}
     out["f"] = np.clip(out["f"], 0.0, np.asarray(params["f_hw_max"], dtype=float))
@@ -86,20 +93,20 @@ def transition_metrics(
     action: Dict[str, np.ndarray],
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Shared simulator interface used for both transition execution and constraint checks."""
+    """Compute actual slot metrics after validating physical executability."""
     Q = np.asarray(state["Q"], dtype=float)
     B = np.asarray(state["B"], dtype=float)
     T = np.asarray(state["T"], dtype=float)
     g = np.asarray(state["g"], dtype=float)
     N0 = float(params.get("N0", 1e-12))
 
-    f = np.maximum(0.0, np.asarray(action["f"], dtype=float))
-    p = np.maximum(0.0, np.asarray(action["p"], dtype=float))
-    b = np.maximum(0.0, np.asarray(action["b"], dtype=float))
-    f_edge = np.maximum(0.0, np.asarray(action["f_edge"], dtype=float))
-    l = np.maximum(0.0, np.asarray(action["l"], dtype=float))
-    o = np.maximum(0.0, np.asarray(action["o"], dtype=float))
-    U = np.maximum(0.0, np.asarray(action["U"], dtype=float))
+    f = np.asarray(action["f"], dtype=float)
+    p = np.asarray(action["p"], dtype=float)
+    b = np.asarray(action["b"], dtype=float)
+    f_edge = np.asarray(action["f_edge"], dtype=float)
+    l = np.asarray(action["l"], dtype=float)
+    o = np.asarray(action["o"], dtype=float)
+    U = np.asarray(action["U"], dtype=float)
 
     delta = float(params["delta"])
     d = np.asarray(params["d"], dtype=float)
@@ -107,10 +114,33 @@ def transition_metrics(
     kappa = np.asarray(params["kappa"], dtype=float)
     baseline = np.asarray(params.get("baseline_power", np.zeros_like(Q)), dtype=float)
 
-    local_time = np.where(l > 0.0, c * l / np.maximum(f, EPS), 0.0)
+    local_time = np.divide(c * l, f, out=np.zeros_like(Q), where=(l > 0.0) & (f > 0.0))
     tx_rate = compute_rates(g, b, p, N0)
-    tx_time = np.where(o > 0.0, d * o / np.maximum(tx_rate, EPS), 0.0)
-    edge_time = np.where(o > 0.0, c * o / np.maximum(f_edge, EPS), 0.0)
+    tx_time = np.divide(d * o, tx_rate, out=np.zeros_like(Q), where=(o > 0.0) & (tx_rate > 0.0))
+    edge_time = np.divide(c * o, f_edge, out=np.zeros_like(Q), where=(o > 0.0) & (f_edge > 0.0))
+
+    local_invalid = (l > 0.0) & ((f <= 0.0) | (local_time > delta + 1e-9))
+    offload_invalid = (o > 0.0) & (
+        (tx_rate <= 0.0) | (f_edge <= 0.0) | (tx_time + edge_time > delta + 1e-9)
+    )
+    action_arrays = [f, p, b, f_edge, l, o, U]
+    action_invalid = (
+        any(np.any(~np.isfinite(values)) for values in action_arrays)
+        or any(np.any(values < 0.0) for values in action_arrays)
+        or np.any(l + o > Q + 1e-9)
+        or np.any(U > np.asarray(state["A"], dtype=float) + 1e-9)
+        or np.any(f > np.asarray(params["f_hw_max"], dtype=float) + 1e-9)
+        or np.any(p > np.asarray(params["p_hw_max"], dtype=float) + 1e-9)
+        or np.any(l > np.asarray(params["Q_max"], dtype=float) + 1e-9)
+        or np.any(o > np.asarray(params["Q_max"], dtype=float) + 1e-9)
+        or np.any(U > np.asarray(params["A_max"], dtype=float) + 1e-9)
+        or np.sum(b) > float(params["shared_bw"]) + 1e-9
+        or np.sum(f_edge) > float(params["shared_edge_cpu"]) + 1e-9
+        or np.any(local_invalid)
+        or np.any(offload_invalid)
+    )
+    if action_invalid:
+        raise ValueError("Action is not physically executable in this slot")
 
     local_energy = np.where(f > 0.0, kappa * np.power(f, 3.0) * local_time, 0.0)
     tx_energy = np.where(tx_rate > 0.0, p * tx_time, 0.0)
@@ -118,18 +148,26 @@ def transition_metrics(
     next_B = B - total_energy
     next_Q = Q - l - o + U
 
-    T_next = predict_next_temperature(T, action, params)
+    actual_params = dict(params)
+    actual_params["thermal_alpha"] = float(params.get("actual_thermal_alpha", params.get("thermal_alpha", 0.15)))
+    T_next = predict_next_temperature(T, action, actual_params)
     info = {
         "local_time": local_time,
         "tx_time": tx_time,
         "edge_time": edge_time,
         "rates": tx_rate,
         "energy": total_energy,
-        "peak_temp": np.maximum(T, T_next),
+        "peak_temp": thermal_peak_temperature(T, action, actual_params),
         "queue_next": next_Q,
         "battery_next": next_B,
         "temperature_next": T_next,
         "total_energy": total_energy,
+        "local_energy": local_energy,
+        "tx_energy": tx_energy,
+        "baseline_energy": baseline * delta,
+        "completed_local_work": l.copy(),
+        "completed_offload_work": o.copy(),
+        "rejected_arrivals": np.maximum(0.0, np.asarray(state["A"], dtype=float) - U),
         "shared_bw_used": np.sum(b),
         "shared_edge_cpu_used": np.sum(f_edge),
     }
