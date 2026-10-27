@@ -5,33 +5,59 @@ from typing import Any, Dict
 import numpy as np
 
 
-def make_default_params(n_devices: int = 1, *, deterministic: bool = False) -> Dict[str, Any]:
+def make_default_params(
+    n_devices: int = 5,
+    *,
+    deterministic: bool = False,
+    horizon: int = 300,
+    delta: float = 1.0,
+    arrival_min_per_slot: float = 0.0,
+    arrival_max_per_slot: float = 2.0,
+    deterministic_arrival_per_slot: float = 0.3,
+    channel_gain_min: float = 5e-6,
+    channel_gain_max: float = 2e-5,
+    deterministic_channel_gain: float = 1e-5,
+    initial_queue_work_units: float = 1.0,
+    initial_battery_fraction: float = 0.8,
+    initial_temperature_c: float = 30.0,
+) -> Dict[str, Any]:
+    if n_devices < 1 or horizon < 1 or delta <= 0.0:
+        raise ValueError("device count and horizon must be positive; slot duration must be positive")
+    if arrival_min_per_slot < 0.0 or arrival_max_per_slot < arrival_min_per_slot:
+        raise ValueError("arrival bounds must be nonnegative and ordered")
+    if not arrival_min_per_slot <= deterministic_arrival_per_slot <= arrival_max_per_slot:
+        raise ValueError("deterministic arrival must be within the configured arrival bounds")
+    if channel_gain_min < 0.0 or channel_gain_max < channel_gain_min:
+        raise ValueError("channel gain bounds must be nonnegative and ordered")
+    if not channel_gain_min <= deterministic_channel_gain <= channel_gain_max:
+        raise ValueError("deterministic channel gain must be within the configured bounds")
+    if initial_queue_work_units < 0.0 or not 0.0 <= initial_battery_fraction <= 1.0:
+        raise ValueError("initial queue must be nonnegative and battery fraction must be in [0, 1]")
     q_max = np.full(n_devices, 10.0, dtype=float)
     b_cap = np.full(n_devices, 9.0 * 3600.0, dtype=float)
     b_min = np.full(n_devices, 0.10 * 9.0 * 3600.0, dtype=float)
     t_max = np.full(n_devices, 80.0, dtype=float)
-    a_max = np.full(n_devices, 1.0, dtype=float)
+    a_max = np.full(n_devices, arrival_max_per_slot, dtype=float)
     d = np.full(n_devices, 0.2 * 1_000_000 * 8, dtype=float)
     c = np.full(n_devices, 40e6, dtype=float)
     f_hw_max = np.full(n_devices, 1.0e9, dtype=float)
     p_hw_max = np.full(n_devices, 1.0, dtype=float)
     kappa = np.full(n_devices, 1e-26, dtype=float)
     baseline_power = np.full(n_devices, 1.0, dtype=float)
-    if deterministic:
-        g_base = np.full(n_devices, 1e-5, dtype=float)
-    else:
-        rng = np.random.default_rng(42)
-        g_base = rng.uniform(5e-6, 2e-5, size=n_devices)
+    g_base = np.full(n_devices, deterministic_channel_gain, dtype=float)
     params = {
         "n_devices": n_devices,
+        "n_edge_servers": 1,
+        "horizon": horizon,
+        "deterministic": bool(deterministic),
         "Q_max": q_max,
         "B_cap": b_cap,
         "B_min": b_min,
         "T_max": t_max,
         "A_max": a_max,
-        "shared_bw": 10e6,
-        "shared_edge_cpu": 10e9,
-        "delta": 1.0,
+        "shared_bandwidth_hz": 10e6,
+        "shared_edge_cpu_hz": 10e9,
+        "delta": delta,
         "d": d,
         "c": c,
         "f_hw_max": f_hw_max,
@@ -42,23 +68,39 @@ def make_default_params(n_devices: int = 1, *, deterministic: bool = False) -> D
         "thermal_alpha": 0.15,
         "thermal_tau": 12.0,
         "N0": 1e-12,
-        "g_seed": 42,
         "g_base": g_base,
+        "arrival_min_per_slot": arrival_min_per_slot,
+        "arrival_max_per_slot": arrival_max_per_slot,
+        "deterministic_arrival_per_slot": deterministic_arrival_per_slot,
+        "channel_gain_min": channel_gain_min,
+        "channel_gain_max": channel_gain_max,
+        "deterministic_channel_gain": deterministic_channel_gain,
+        "channel_distribution_label": "synthetic_uniform_development_not_calibrated_propagation",
+        "initial_queue_work_units": initial_queue_work_units,
+        "initial_battery_fraction": initial_battery_fraction,
+        "initial_temperature_c": initial_temperature_c,
         "observation_temperature_scale_c": 100.0,
         "observation_channel_gain_scale": 1e-5,
-        "observation_bandwidth_scale_bps": 10e6,
+        "observation_bandwidth_scale_hz": 10e6,
         "observation_edge_cpu_scale_hz": 10e9,
         "controller_failure_penalty": 10.0,
         "actual_violation_penalty": 10.0,
         "task_size_description": "0.2 decimal MB = 1,600,000 bits",
+        "provisional_parameter_labels": {
+            "p_hw_max": "provisional_uncalibrated",
+            "kappa": "provisional_uncalibrated",
+            "baseline_power": "provisional_uncalibrated",
+            "N0": "provisional_uncalibrated",
+            "thermal_alpha": "provisional_uncalibrated",
+            "thermal_tau": "provisional_uncalibrated",
+        },
     }
     return params
 
 
 def make_debug_params(n_devices: int = 1) -> Dict[str, Any]:
-    params = make_default_params(n_devices, deterministic=True)
+    params = make_default_params(n_devices, deterministic=True, horizon=10)
     params["A_max"] = np.full(n_devices, 2.0, dtype=float)
     params["g_base"] = np.full(n_devices, 2e-5, dtype=float)
-    params["shared_bw"] = 10e6
-    params["shared_edge_cpu"] = 10e9
+    params["deterministic_channel_gain"] = 2e-5
     return params

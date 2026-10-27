@@ -80,8 +80,8 @@ def normalize_action(action: Dict[str, np.ndarray], params: Dict[str, Any]) -> D
     out = {key: np.asarray(action[key], dtype=float).copy() for key in ["f", "p", "b", "f_edge", "l", "o", "U"]}
     out["f"] = np.clip(out["f"], 0.0, np.asarray(params["f_hw_max"], dtype=float))
     out["p"] = np.clip(out["p"], 0.0, np.asarray(params["p_hw_max"], dtype=float))
-    out["b"] = np.clip(out["b"], 0.0, float(params["shared_bw"]))
-    out["f_edge"] = np.clip(out["f_edge"], 0.0, float(params["shared_edge_cpu"]))
+    out["b"] = np.clip(out["b"], 0.0, float(params["shared_bandwidth_hz"]))
+    out["f_edge"] = np.clip(out["f_edge"], 0.0, float(params["shared_edge_cpu_hz"]))
     out["l"] = np.clip(out["l"], 0.0, np.asarray(params["Q_max"], dtype=float))
     out["o"] = np.clip(out["o"], 0.0, np.asarray(params["Q_max"], dtype=float))
     out["U"] = np.clip(out["U"], 0.0, np.asarray(params["A_max"], dtype=float))
@@ -134,8 +134,8 @@ def transition_metrics(
         or np.any(l > np.asarray(params["Q_max"], dtype=float) + 1e-9)
         or np.any(o > np.asarray(params["Q_max"], dtype=float) + 1e-9)
         or np.any(U > np.asarray(params["A_max"], dtype=float) + 1e-9)
-        or np.sum(b) > float(params["shared_bw"]) + 1e-9
-        or np.sum(f_edge) > float(params["shared_edge_cpu"]) + 1e-9
+        or np.sum(b) > float(params["shared_bandwidth_hz"]) + 1e-9
+        or np.sum(f_edge) > float(params["shared_edge_cpu_hz"]) + 1e-9
         or np.any(local_invalid)
         or np.any(offload_invalid)
     )
@@ -168,8 +168,8 @@ def transition_metrics(
         "completed_local_work": l.copy(),
         "completed_offload_work": o.copy(),
         "rejected_arrivals": np.maximum(0.0, np.asarray(state["A"], dtype=float) - U),
-        "shared_bw_used": np.sum(b),
-        "shared_edge_cpu_used": np.sum(f_edge),
+        "shared_bandwidth_hz_used": np.sum(b),
+        "shared_edge_cpu_hz_used": np.sum(f_edge),
     }
     return info
 

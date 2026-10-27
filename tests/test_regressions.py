@@ -1,4 +1,5 @@
 import csv
+import json
 
 import numpy as np
 import pytest
@@ -136,7 +137,7 @@ def test_default_task_size_is_decimal_megabits_in_bits():
 def test_observation_scaling_preserves_capacity_and_out_of_limit_state():
     params_a = make_default_params(1, deterministic=True)
     params_b = make_default_params(1, deterministic=True)
-    params_b["shared_bw"] = 20e6
+    params_b["shared_bandwidth_hz"] = 20e6
     env_a = make_env(params=params_a, deterministic=True)
     env_b = make_env(params=params_b, deterministic=True)
     env_a.reset(options={"state": _state(params_a, q=22.0)})
@@ -165,8 +166,8 @@ def test_action_decoding_maps_normalized_range_to_nonnegative_physical_ranges():
     assert all(value[0] == 0.0 for value in low.values())
     assert high["f"][0] == pytest.approx(env.params["f_hw_max"][0])
     assert high["p"][0] == pytest.approx(env.params["p_hw_max"][0])
-    assert high["b"][0] == pytest.approx(env.params["shared_bw"])
-    assert high["f_edge"][0] == pytest.approx(env.params["shared_edge_cpu"])
+    assert high["b"][0] == pytest.approx(env.params["shared_bandwidth_hz"])
+    assert high["f_edge"][0] == pytest.approx(env.params["shared_edge_cpu_hz"])
 
 
 def test_raw_policy_preprocessing_is_not_labelled_nominal_acceptance():
@@ -182,6 +183,10 @@ def test_raw_policy_preprocessing_is_not_labelled_nominal_acceptance():
 
 def test_diagnostic_csv_matches_recorded_state_and_marks_failure_unobserved(tmp_path):
     normal_dir = run_scenario("normal", tmp_path, seed=0)
+    with (normal_dir / "config_snapshot.json").open() as handle:
+        config_snapshot = json.load(handle)
+    assert config_snapshot["seed"] == 0
+    assert config_snapshot["scenario"] == "normal"
     with (normal_dir / "episode.csv").open(newline="") as handle:
         normal = next(csv.DictReader(handle))
     assert float(normal["pre_Q_work_units"]) == pytest.approx(1.0)
@@ -235,8 +240,8 @@ def test_shared_resource_limits_are_checked_across_devices():
     action["f_edge"][:] = 6e9
     report = evaluate_constraints(state, action, params)
     assert not report["feasible"]
-    assert report["violations"]["magnitudes"]["shared_bw_excess"] == pytest.approx(2e6)
-    assert report["violations"]["magnitudes"]["shared_edge_excess"] == pytest.approx(2e9)
+    assert report["violations"]["magnitudes"]["shared_bandwidth_excess_hz"] == pytest.approx(2e6)
+    assert report["violations"]["magnitudes"]["shared_edge_cpu_excess_hz"] == pytest.approx(2e9)
 
 
 def test_post_transition_checker_uses_actual_state_and_metrics():

@@ -18,8 +18,8 @@ class SafetyFilter:
         out = {k: np.asarray(v, dtype=float).copy() for k, v in action.items()}
         out["f"] = np.clip(out["f"], 0.0, np.asarray(self.params["f_hw_max"], dtype=float))
         out["p"] = np.clip(out["p"], 0.0, np.asarray(self.params["p_hw_max"], dtype=float))
-        out["b"] = np.clip(out["b"], 0.0, float(self.params["shared_bw"]))
-        out["f_edge"] = np.clip(out["f_edge"], 0.0, float(self.params["shared_edge_cpu"]))
+        out["b"] = np.clip(out["b"], 0.0, float(self.params["shared_bandwidth_hz"]))
+        out["f_edge"] = np.clip(out["f_edge"], 0.0, float(self.params["shared_edge_cpu_hz"]))
         out["l"] = np.clip(out["l"], 0.0, np.asarray(self.params["Q_max"], dtype=float))
         out["o"] = np.clip(out["o"], 0.0, np.asarray(self.params["Q_max"], dtype=float))
         out["U"] = np.clip(out["U"], 0.0, np.asarray(self.params["A_max"], dtype=float))
@@ -38,8 +38,8 @@ class SafetyFilter:
         scales = [
             np.asarray(self.params["f_hw_max"], dtype=float),
             np.asarray(self.params["p_hw_max"], dtype=float),
-            np.full(n, float(self.params["shared_bw"]), dtype=float),
-            np.full(n, float(self.params["shared_edge_cpu"]), dtype=float),
+            np.full(n, float(self.params["shared_bandwidth_hz"]), dtype=float),
+            np.full(n, float(self.params["shared_edge_cpu_hz"]), dtype=float),
             np.asarray(self.params["Q_max"], dtype=float),
             np.asarray(self.params["Q_max"], dtype=float),
             np.asarray(self.params["A_max"], dtype=float),
@@ -62,8 +62,8 @@ class SafetyFilter:
             cand["o"] = factor * np.minimum(cand["o"], q)
             cand["f"] = factor * np.minimum(cand["f"], np.asarray(self.params["f_hw_max"], dtype=float))
             cand["p"] = factor * np.minimum(cand["p"], np.asarray(self.params["p_hw_max"], dtype=float))
-            cand["b"] = factor * np.minimum(cand["b"], float(self.params["shared_bw"]))
-            cand["f_edge"] = factor * np.minimum(cand["f_edge"], float(self.params["shared_edge_cpu"]))
+            cand["b"] = factor * np.minimum(cand["b"], float(self.params["shared_bandwidth_hz"]))
+            cand["f_edge"] = factor * np.minimum(cand["f_edge"], float(self.params["shared_edge_cpu_hz"]))
         return cand
 
     def filter_action(self, state: Dict[str, np.ndarray], action: Dict[str, np.ndarray]) -> Dict[str, Any]:

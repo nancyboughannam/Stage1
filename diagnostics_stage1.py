@@ -50,7 +50,7 @@ def _scenario(name: str) -> tuple[Dict[str, Any], Dict[str, np.ndarray], np.ndar
             "A": np.array([0.3]),
             "g": params["g_base"].copy(),
         }
-        raw = _raw_for_ratios([0.2, 0.1, 0.1, 0.05, 0.005, 0.0, 0.05])
+        raw = _raw_for_ratios([0.2, 0.1, 0.1, 0.05, 0.005, 0.0, 0.025])
         description = "A hardware-admissible local-work proposal expected to pass unchanged for one step."
     elif name == "thermal":
         params["thermal_alpha"] = 60.0
@@ -172,8 +172,8 @@ def _write_csv(path: Path, scenario: str, seed: int, info: Dict[str, Any], param
                 "pred_resource_absence": _get_violation(proposed_report, "resource_absence", device),
                 "pred_local_work_without_cpu": _get_violation(proposed_report, "work_without_frequency", device),
                 "pred_offload_without_path": _get_violation(proposed_report, "work_without_transmission", device),
-                "pred_shared_bw_violation": proposed_report["violations"]["shared_bw_violation"] > 0.0,
-                "pred_shared_edge_violation": proposed_report["violations"]["shared_edge_violation"] > 0.0,
+                "pred_shared_bandwidth_violation": proposed_report["violations"]["shared_bandwidth_violation"] > 0.0,
+                "pred_shared_edge_cpu_violation": proposed_report["violations"]["shared_edge_cpu_violation"] > 0.0,
                 "pred_queue_excess_work_units": proposed_report["violations"]["magnitudes"]["queue_excess"],
                 "pred_queue_work_excess_units": proposed_report["violations"]["magnitudes"]["queue_work_excess"],
                 "pred_admission_excess_units": proposed_report["violations"]["magnitudes"]["admission_excess"],
@@ -182,8 +182,8 @@ def _write_csv(path: Path, scenario: str, seed: int, info: Dict[str, Any], param
                 "pred_temperature_excess_c": proposed_report["violations"]["magnitudes"]["temperature_peak_excess"],
                 "pred_local_cpu_excess_hz": proposed_report["violations"]["magnitudes"]["local_cpu_excess_hz"],
                 "pred_tx_power_excess_w": proposed_report["violations"]["magnitudes"]["transmit_power_excess_w"],
-                "pred_shared_bw_excess_bps": proposed_report["violations"]["magnitudes"]["shared_bw_excess"],
-                "pred_shared_edge_excess_hz": proposed_report["violations"]["magnitudes"]["shared_edge_excess"],
+                "pred_shared_bandwidth_excess_hz": proposed_report["violations"]["magnitudes"]["shared_bandwidth_excess_hz"],
+                "pred_shared_edge_cpu_excess_hz": proposed_report["violations"]["magnitudes"]["shared_edge_cpu_excess_hz"],
                 "pred_timing_excess_s": proposed_report["violations"]["magnitudes"]["timing_excess"],
                 "actual_queue_violation": actual_report["flags"]["queue_capacity"].__contains__(device) if actual_report else "",
                 "actual_battery_violation": actual_report["flags"]["battery_reserve"].__contains__(device) if actual_report else "",
@@ -197,7 +197,7 @@ def _write_csv(path: Path, scenario: str, seed: int, info: Dict[str, Any], param
         )
         rows.append(row)
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -230,8 +230,8 @@ def _write_plots(directory: Path, scenario: str, state: Dict[str, np.ndarray], p
     scales = {
         "f": np.asarray(params["f_hw_max"]),
         "p": np.asarray(params["p_hw_max"]),
-        "b": np.full(len(state["Q"]), params["shared_bw"]),
-        "f_edge": np.full(len(state["Q"]), params["shared_edge_cpu"]),
+        "b": np.full(len(state["Q"]), params["shared_bandwidth_hz"]),
+        "f_edge": np.full(len(state["Q"]), params["shared_edge_cpu_hz"]),
         "l": np.asarray(params["Q_max"]),
         "o": np.asarray(params["Q_max"]),
         "U": np.asarray(params["A_max"]),
@@ -259,10 +259,18 @@ def _write_plots(directory: Path, scenario: str, state: Dict[str, np.ndarray], p
 def run_scenario(name: str, output_root: Path, seed: int = 0) -> Path:
     params, initial_state, raw_action, description = _scenario(name)
     env = make_env(n_devices=1, horizon=1, params=params, deterministic=True)
-    env.reset(seed=seed, options={"state": initial_state})
+    _, reset_info = env.reset(seed=seed, options={"state": initial_state})
     _, reward, terminated, truncated, info = env.step(raw_action)
     directory = output_root / name
     directory.mkdir(parents=True, exist_ok=True)
+    config_snapshot = {
+        "scenario": name,
+        "seed": seed,
+        "effective_config": reset_info["effective_config"],
+        "initial_state": {key: np.asarray(value, dtype=float).tolist() for key, value in initial_state.items()},
+        "description": description,
+    }
+    (directory / "config_snapshot.json").write_text(json.dumps(_json_safe(config_snapshot), indent=2, sort_keys=True) + "\n")
     _write_csv(directory / "episode.csv", name, seed, info, params)
     _write_plots(directory, name, initial_state, params, info)
     executed = info["executed_action"]

@@ -50,8 +50,8 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     nonneg_ok = np.all((l >= 0.0) & (o >= 0.0) & (U >= 0.0) & (f >= 0.0) & (p >= 0.0) & (b >= 0.0) & (f_edge >= 0.0))
     local_ok = f <= f_hw_max + 1e-9
     tx_ok = p <= p_hw_max + 1e-9
-    bw_ok = np.sum(b) <= params["shared_bw"] + 1e-9
-    edge_ok = np.sum(f_edge) <= params["shared_edge_cpu"] + 1e-9
+    bw_ok = np.sum(b) <= params["shared_bandwidth_hz"] + 1e-9
+    edge_ok = np.sum(f_edge) <= params["shared_edge_cpu_hz"] + 1e-9
 
     rate = compute_rates(g, b, p, N0)
     t_local = np.divide(c * l, f, out=np.zeros_like(Q), where=f > 0)
@@ -112,8 +112,8 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
             "timing": _bad_indices(~timing_ok),
             "battery": _bad_indices(~battery_ok),
             "temperature": _bad_indices(~temp_ok),
-            "shared_bw_violation": float(max(0.0, np.sum(b) - params["shared_bw"])),
-            "shared_edge_violation": float(max(0.0, np.sum(f_edge) - params["shared_edge_cpu"])),
+            "shared_bandwidth_violation": float(max(0.0, np.sum(b) - params["shared_bandwidth_hz"])),
+            "shared_edge_cpu_violation": float(max(0.0, np.sum(f_edge) - params["shared_edge_cpu_hz"])),
             "queue_overflow": _bad_indices(~queue_cap_ok),
             "battery_overflow": _bad_indices(~battery_cap_ok),
             "thermal_violation": _bad_indices(~temp_ok),
@@ -130,8 +130,8 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
                 "temperature_peak_excess": float(np.max(np.maximum(0.0, predicted_peak_T - T_max))) if predicted_peak_T.size else 0.0,
                 "local_cpu_excess_hz": float(np.max(np.maximum(0.0, f - f_hw_max))) if f.size else 0.0,
                 "transmit_power_excess_w": float(np.max(np.maximum(0.0, p - p_hw_max))) if p.size else 0.0,
-                "shared_bw_excess": float(max(0.0, np.sum(b) - params["shared_bw"])) if np.size(b) else 0.0,
-                "shared_edge_excess": float(max(0.0, np.sum(f_edge) - params["shared_edge_cpu"])) if np.size(f_edge) else 0.0,
+                "shared_bandwidth_excess_hz": float(max(0.0, np.sum(b) - params["shared_bandwidth_hz"])) if np.size(b) else 0.0,
+                "shared_edge_cpu_excess_hz": float(max(0.0, np.sum(f_edge) - params["shared_edge_cpu_hz"])) if np.size(f_edge) else 0.0,
                 "timing_excess": float(np.max(np.maximum(0.0, np.maximum(t_local, t_tx + t_edge) - delta))) if Q.size else 0.0,
                 "local_work_without_cpu": float(np.sum(positive_local)),
                 "offload_work_without_path": float(np.sum(positive_tx)),
