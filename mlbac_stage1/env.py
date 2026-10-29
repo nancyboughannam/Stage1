@@ -126,7 +126,10 @@ class MBACEnv(gym.Env):
         q = np.asarray(self.state["Q"], dtype=float) / np.asarray(self.params["Q_max"], dtype=float)
         b = np.asarray(self.state["B"], dtype=float) / np.asarray(self.params["B_cap"], dtype=float)
         t = np.asarray(self.state["T"], dtype=float) / float(self.params["observation_temperature_scale_c"])
-        a = np.asarray(self.state["A"], dtype=float) / np.asarray(self.params["A_max"], dtype=float)
+        arrivals = np.asarray(self.state["A"], dtype=float)
+        arrival_max = np.asarray(self.params["A_max"], dtype=float)
+        # A zero arrival bound means no arriving work, represented by zero.
+        a = np.divide(arrivals, arrival_max, out=np.zeros_like(arrivals), where=arrival_max > 0.0)
         g = np.asarray(self.state["g"], dtype=float) / float(self.params["observation_channel_gain_scale"])
         remaining = max(0, self.horizon - self.timestep) / self.horizon
         globals_ = np.array(

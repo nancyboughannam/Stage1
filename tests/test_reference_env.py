@@ -245,3 +245,53 @@ def test_reference_demo_outputs_and_episode_conservation(tmp_path):
         assert final_queue == pytest.approx(device_balance)
     for name in ("state_trajectories.png", "workload_flows.png", "shared_resource_utilization.png"):
         assert (output / name).is_file()
+
+
+@pytest.mark.parametrize('deterministic', [False, True])
+def test_zero_arrival_bound_has_finite_observations(deterministic):
+    params = make_default_params(
+        2, horizon=3, deterministic=deterministic,
+        arrival_max_per_slot=0.0, deterministic_arrival_per_slot=0.0,
+    )
+    env = make_env(params=params)
+    with np.errstate(divide='raise', invalid='raise'):
+        obs, _ = env.reset(seed=19)
+        assert np.isfinite(obs).all()
+        np.testing.assert_array_equal(obs[6:8], np.zeros(2))
+        for _ in range(3):
+            obs, _, _, _, _ = env.step(_policy(2))
+            assert np.isfinite(obs).all()
+            np.testing.assert_array_equal(obs[6:8], np.zeros(2))
+    env.close()
+
+
+@pytest.mark.parametrize('settings', [
+    {'arrival_max_per_slot': 0.2},
+    {'channel_gain_min': 1e-7, 'channel_gain_max': 1e-6},
+])
+def test_stochastic_bounds_ignore_unused_deterministic_defaults(settings):
+    params = make_default_params(2, horizon=3, **settings)
+    env = make_env(params=params)
+    obs, _ = env.reset(seed=19)
+    for _ in range(3):
+        assert np.isfinite(obs).all()
+        assert np.all(env.state['A'] >= params['arrival_min_per_slot'])
+        assert np.all(env.state['A'] <= params['arrival_max_per_slot'])
+        assert np.all(env.state['g'] >= params['channel_gain_min'])
+        assert np.all(env.state['g'] <= params['channel_gain_max'])
+        obs, _, _, _, _ = env.step(_policy(2))
+    env.close()
+    # Deterministic mode must still reject its out-of-range default value.
+    with pytest.raises(ValueError, match='deterministic'):
+        make_default_params(deterministic=True, **settings)
+
+
+@pytest.mark.parametrize('settings', [
+    {'arrival_min_per_slot': -0.1},
+    {'arrival_min_per_slot': 3.0, 'arrival_max_per_slot': 2.0},
+    {'channel_gain_min': -1e-7},
+    {'channel_gain_min': 2e-5, 'channel_gain_max': 1e-5},
+])
+def test_invalid_stochastic_bounds_remain_rejected(settings):
+    with pytest.raises(ValueError, match='bounds'):
+        make_default_params(**settings)

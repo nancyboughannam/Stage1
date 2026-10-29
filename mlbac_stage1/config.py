@@ -25,11 +25,11 @@ def make_default_params(
         raise ValueError("device count and horizon must be positive; slot duration must be positive")
     if arrival_min_per_slot < 0.0 or arrival_max_per_slot < arrival_min_per_slot:
         raise ValueError("arrival bounds must be nonnegative and ordered")
-    if not arrival_min_per_slot <= deterministic_arrival_per_slot <= arrival_max_per_slot:
+    if deterministic and not arrival_min_per_slot <= deterministic_arrival_per_slot <= arrival_max_per_slot:
         raise ValueError("deterministic arrival must be within the configured arrival bounds")
     if channel_gain_min < 0.0 or channel_gain_max < channel_gain_min:
         raise ValueError("channel gain bounds must be nonnegative and ordered")
-    if not channel_gain_min <= deterministic_channel_gain <= channel_gain_max:
+    if deterministic and not channel_gain_min <= deterministic_channel_gain <= channel_gain_max:
         raise ValueError("deterministic channel gain must be within the configured bounds")
     if initial_queue_work_units < 0.0 or not 0.0 <= initial_battery_fraction <= 1.0:
         raise ValueError("initial queue must be nonnegative and battery fraction must be in [0, 1]")

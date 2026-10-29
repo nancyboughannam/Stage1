@@ -32,7 +32,7 @@ At the beginning of slot $t$, each device's physical state is $(Q_t,B_t,T_t,A_t,
 - $A_t$: divisible offered workload in task-equivalents for this slot.
 - $g_t$: dimensionless channel power gain held constant during this slot.
 
-The `float32` observation is grouped device-major in this order: all $Q_t/Q_{max}$; all $B_t/B_{cap}$; all $T_t/(100\ C)$; all $A_t/A_{max}$; each device's $g_t/(10^{-5})$; shared bandwidth divided by $10^7$ Hz; shared edge CPU divided by $10^{10}$ cycles/s; remaining slots divided by the horizon. Its length is $5N+3$ (28 for five devices). State features are scaled but not clipped at safety limits. Raw physical states are included in environment info and demonstration CSVs. The observed $g_t$ is the same value used by the filter and transition for slot $t$.
+The `float32` observation is grouped feature-major in this order: all $Q_t/Q_{max}$; all $B_t/B_{cap}$; all $T_t/(100\ C)$; all $A_t/A_{max}$; each device's $g_t/(10^{-5})$; shared bandwidth divided by $10^7$ Hz; shared edge CPU divided by $10^{10}$ cycles/s; remaining slots divided by the horizon. When a device's arrival bound is zero, its normalized arrival feature is zero. Its length is $5N+3$ (28 for five devices). State features are scaled but not clipped at safety limits. Raw physical states are included in environment info and demonstration CSVs. The observed $g_t$ is the same value used by the filter and transition for slot $t$.
 
 `reset()` returns the actual seed, JSON-safe effective configuration, and raw initial physical state. The reference demonstration saves this configuration and seed in `config_snapshot.json`.
 
