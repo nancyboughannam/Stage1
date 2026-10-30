@@ -23,6 +23,8 @@ def test_safe_action_passes_through():
         "U": np.array([0.4]),
     }
     params = {
+        "A_max": np.array([2.0]),
+        "N0": 1e-12,
         "Q_max": np.array([10.0]),
         "B_min": np.array([0.1 * 9 * 3600]),
         "T_max": np.array([80.0]),
@@ -60,6 +62,8 @@ def test_unsafe_action_is_corrected():
         "U": np.array([1.0]),
     }
     params = {
+        "A_max": np.array([2.0]),
+        "N0": 1e-12,
         "Q_max": np.array([10.0]),
         "B_min": np.array([0.1 * 9 * 3600]),
         "T_max": np.array([80.0]),
@@ -99,6 +103,8 @@ def test_queue_and_energy_conservation_snapshot():
         "U": np.array([0.5]),
     }
     params = {
+        "A_max": np.array([2.0]),
+        "N0": 1e-12,
         "Q_max": np.array([10.0]),
         "B_min": np.array([0.1 * 9 * 3600]),
         "T_max": np.array([80.0]),

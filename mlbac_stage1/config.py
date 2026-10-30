@@ -5,6 +5,25 @@ from typing import Any, Dict
 import numpy as np
 
 
+# Absolute numerical tolerances in the indicated physical units; not error bounds.
+CHECKER_TOLERANCES = {
+    "work": 1e-9, "energy_j": 1e-9, "temperature_c": 1e-9,
+    "time_s": 1e-9, "frequency_hz": 1e-9, "bandwidth_hz": 1e-9,
+    "power_w": 1e-9,
+}
+
+
+def checker_tolerances(params):
+    values = dict(CHECKER_TOLERANCES)
+    supplied = params.get("checker_tolerances", {})
+    if set(supplied) - set(values):
+        raise ValueError("Unknown checker tolerance")
+    values.update(supplied)
+    if any(not np.isfinite(v) or v < 0 for v in values.values()):
+        raise ValueError("Checker tolerances must be finite and nonnegative")
+    return values
+
+
 def make_default_params(
     n_devices: int = 5,
     *,
@@ -21,6 +40,14 @@ def make_default_params(
     initial_battery_fraction: float = 0.8,
     initial_temperature_c: float = 30.0,
 ) -> Dict[str, Any]:
+    numeric = (delta, arrival_min_per_slot, arrival_max_per_slot,
+               deterministic_arrival_per_slot, channel_gain_min, channel_gain_max,
+               deterministic_channel_gain, initial_queue_work_units,
+               initial_battery_fraction, initial_temperature_c)
+    if not all(np.isfinite(value) for value in numeric):
+        raise ValueError("Configuration values must be finite")
+    if not isinstance(n_devices, (int, np.integer)) or not isinstance(horizon, (int, np.integer)):
+        raise ValueError("device count and horizon must be integers")
     if n_devices < 1 or horizon < 1 or delta <= 0.0:
         raise ValueError("device count and horizon must be positive; slot duration must be positive")
     if arrival_min_per_slot < 0.0 or arrival_max_per_slot < arrival_min_per_slot:
@@ -46,6 +73,8 @@ def make_default_params(
     baseline_power = np.full(n_devices, 1.0, dtype=float)
     g_base = np.full(n_devices, deterministic_channel_gain, dtype=float)
     params = {
+        "checker_tolerances": dict(CHECKER_TOLERANCES),
+        "verification_scope": "one_step_predicted_zero_model_margin",
         "n_devices": n_devices,
         "n_edge_servers": 1,
         "horizon": horizon,
@@ -104,3 +133,25 @@ def make_debug_params(n_devices: int = 1) -> Dict[str, Any]:
     params["g_base"] = np.full(n_devices, 2e-5, dtype=float)
     params["deterministic_channel_gain"] = 2e-5
     return params
+
+
+def action_metric_settings(params):
+    """Derive scales from effective configuration (including scenario overrides).
+
+    Zero-range components are fixed at zero and excluded using active masks.
+    No optimizer is enabled by these settings in Batch A.
+    """
+    n = len(params["Q_max"])
+    scales = {
+        "f": np.asarray(params["f_hw_max"], dtype=float).copy(),
+        "p": np.asarray(params["p_hw_max"], dtype=float).copy(),
+        "b": np.full(n, params["shared_bandwidth_hz"], dtype=float),
+        "f_edge": np.full(n, params["shared_edge_cpu_hz"], dtype=float),
+        "l": np.asarray(params["Q_max"], dtype=float).copy(),
+        "o": np.asarray(params["Q_max"], dtype=float).copy(),
+        "U": np.asarray(params["A_max"], dtype=float).copy(),
+    }
+    if any(v.shape != (n,) or not np.isfinite(v).all() or np.any(v < 0) for v in scales.values()):
+        raise ValueError("Action scales must be finite, nonnegative arrays of length N")
+    return {"scales": scales, "weights": {k: np.ones(n) for k in scales},
+            "active": {k: v > 0 for k, v in scales.items()}}

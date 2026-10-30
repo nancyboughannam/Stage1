@@ -5,6 +5,8 @@ from typing import Any, Dict
 
 import numpy as np
 
+from .config import checker_tolerances
+
 
 EPS = 1e-12
 
@@ -17,6 +19,77 @@ class DeviceSpec:
     power_max: float
     baseline_power: float
     kappa: float
+
+
+ACTION_FIELDS = ("f", "p", "b", "f_edge", "l", "o", "U")
+STATE_FIELDS = ("Q", "B", "T", "A", "g")
+
+
+def validate_arrays(values, fields, n):
+    """Reject missing, nonnumeric, nonfinite or wrongly shaped fields; never broadcast."""
+    errors = {}
+    if not isinstance(values, dict):
+        return {"input": "expected a mapping"}
+    for key in fields:
+        try:
+            array = np.asarray(values[key], dtype=float)
+            if array.shape != (n,):
+                errors[key] = "expected shape (N,)"
+            elif not np.isfinite(array).all():
+                errors[key] = "nonfinite value"
+        except (KeyError, TypeError, ValueError, OverflowError):
+            errors[key] = "missing or nonnumeric field"
+    return errors
+
+
+def validate_state(state, params):
+    n = len(params["Q_max"])
+    errors = validate_arrays(state, STATE_FIELDS, n)
+    if errors:
+        return {"status": "invalid_state", "errors": errors}
+    for key in ("Q", "B", "A", "g"):
+        if np.any(np.asarray(state[key]) < 0):
+            errors[key] = "negative physical value"
+    if np.any(np.asarray(state["B"]) > params["B_cap"]):
+        errors["B"] = "above battery capacity"
+    if np.any(np.asarray(state["T"]) < -273.15):
+        errors["T"] = "below absolute zero"
+    if errors:
+        return {"status": "invalid_state", "errors": errors}
+    tol = checker_tolerances(params)
+    unsafe = {}
+    for key, mask in {
+        "queue": np.asarray(state["Q"]) > params["Q_max"] + tol["work"],
+        "battery": np.asarray(state["B"]) < params["B_min"] - tol["energy_j"],
+        "temperature": np.asarray(state["T"]) > params["T_max"] + tol["temperature_c"],
+    }.items():
+        if np.any(mask):
+            unsafe[key] = np.flatnonzero(mask).tolist()
+    return {"status": "already_unsafe" if unsafe else "valid", "errors": unsafe}
+
+
+def slot_quantities(state, action, params):
+    """Shared physical equations. Call only after shape/finiteness validation.
+
+    Missing resources yield infinite durations for positive work, never free service.
+    """
+    f, p, b, edge, l, o, _ = (np.asarray(action[k], dtype=float) for k in ACTION_FIELDS)
+    rate = compute_rates(state["g"], b, p, float(params.get("N0", 1e-12)))
+    def duration(work, amount, resource):
+        out = np.where(work > 0, np.inf, 0.0)
+        return np.divide(amount * work, resource, out=out, where=(work > 0) & (resource > 0))
+    local = duration(l, np.asarray(params["c"]), f)
+    tx = duration(o, np.asarray(params["d"]), rate)
+    remote = duration(o, np.asarray(params["c"]), edge)
+    # c*l*f^2 is algebraically equivalent to f^3*t for executable local work.
+    e_local = np.asarray(params["kappa"]) * np.asarray(params["c"]) * l * f**2
+    e_tx = np.zeros_like(tx)
+    np.multiply(p, tx, out=e_tx, where=np.isfinite(tx))
+    e_tx[~np.isfinite(tx)] = np.inf
+    base = np.asarray(params["baseline_power"]) * float(params["delta"])
+    return {"rate": rate, "local_time": local, "tx_time": tx, "edge_time": remote,
+            "local_energy": e_local, "tx_energy": e_tx, "baseline_energy": base,
+            "total_energy": e_local + e_tx + base}
 
 
 def safe_log2_ratio(num: float, den: float) -> float:
@@ -70,7 +143,7 @@ def predict_next_temperature(T: np.ndarray, action: Dict[str, np.ndarray], param
 
 
 def thermal_peak_temperature(T: np.ndarray, action: Dict[str, np.ndarray], params: Dict[str, Any]) -> np.ndarray:
-    """Peak under the slot's monotone first-order thermal trajectory (an endpoint check)."""
+    """Endpoint-based peak estimate; not a validated within-slot physical bound."""
     start = np.asarray(T, dtype=float)
     end = predict_next_temperature(start, action, params)
     return np.maximum(start, end)
@@ -94,6 +167,12 @@ def transition_metrics(
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Compute actual slot metrics after validating physical executability."""
+    state_report = validate_state(state, params)
+    if state_report["status"] == "invalid_state":
+        raise ValueError("Invalid physical state")
+    if validate_arrays(action, ACTION_FIELDS, len(params["Q_max"])):
+        raise ValueError("Action is not physically executable in this slot")
+    tol = checker_tolerances(params)
     Q = np.asarray(state["Q"], dtype=float)
     B = np.asarray(state["B"], dtype=float)
     T = np.asarray(state["T"], dtype=float)
@@ -114,37 +193,36 @@ def transition_metrics(
     kappa = np.asarray(params["kappa"], dtype=float)
     baseline = np.asarray(params.get("baseline_power", np.zeros_like(Q)), dtype=float)
 
-    local_time = np.divide(c * l, f, out=np.zeros_like(Q), where=(l > 0.0) & (f > 0.0))
-    tx_rate = compute_rates(g, b, p, N0)
-    tx_time = np.divide(d * o, tx_rate, out=np.zeros_like(Q), where=(o > 0.0) & (tx_rate > 0.0))
-    edge_time = np.divide(c * o, f_edge, out=np.zeros_like(Q), where=(o > 0.0) & (f_edge > 0.0))
+    quantities = slot_quantities(state, action, params)
+    local_time, tx_time, edge_time, tx_rate = (quantities[k] for k in
+        ("local_time", "tx_time", "edge_time", "rate"))
 
-    local_invalid = (l > 0.0) & ((f <= 0.0) | (local_time > delta + 1e-9))
+    local_invalid = (l > 0.0) & ((f <= 0.0) | (local_time > delta + tol["time_s"]))
     offload_invalid = (o > 0.0) & (
-        (tx_rate <= 0.0) | (f_edge <= 0.0) | (tx_time + edge_time > delta + 1e-9)
+        (tx_rate <= 0.0) | (f_edge <= 0.0) | (tx_time + edge_time > delta + tol["time_s"])
     )
     action_arrays = [f, p, b, f_edge, l, o, U]
     action_invalid = (
         any(np.any(~np.isfinite(values)) for values in action_arrays)
         or any(np.any(values < 0.0) for values in action_arrays)
-        or np.any(l + o > Q + 1e-9)
-        or np.any(U > np.asarray(state["A"], dtype=float) + 1e-9)
-        or np.any(f > np.asarray(params["f_hw_max"], dtype=float) + 1e-9)
-        or np.any(p > np.asarray(params["p_hw_max"], dtype=float) + 1e-9)
-        or np.any(l > np.asarray(params["Q_max"], dtype=float) + 1e-9)
-        or np.any(o > np.asarray(params["Q_max"], dtype=float) + 1e-9)
-        or np.any(U > np.asarray(params["A_max"], dtype=float) + 1e-9)
-        or np.sum(b) > float(params["shared_bandwidth_hz"]) + 1e-9
-        or np.sum(f_edge) > float(params["shared_edge_cpu_hz"]) + 1e-9
+        or np.any(l + o > Q + tol["work"])
+        or np.any(U > np.asarray(state["A"], dtype=float) + tol["work"])
+        or np.any(f > np.asarray(params["f_hw_max"], dtype=float) + tol["frequency_hz"])
+        or np.any(p > np.asarray(params["p_hw_max"], dtype=float) + tol["power_w"])
+        or np.any(l > np.asarray(params["Q_max"], dtype=float) + tol["work"])
+        or np.any(o > np.asarray(params["Q_max"], dtype=float) + tol["work"])
+        or np.any(U > np.asarray(params["A_max"], dtype=float) + tol["work"])
+        or np.sum(b) > float(params["shared_bandwidth_hz"]) + tol["bandwidth_hz"]
+        or np.sum(f_edge) > float(params["shared_edge_cpu_hz"]) + tol["frequency_hz"]
         or np.any(local_invalid)
         or np.any(offload_invalid)
     )
     if action_invalid:
         raise ValueError("Action is not physically executable in this slot")
 
-    local_energy = np.where(f > 0.0, kappa * np.power(f, 3.0) * local_time, 0.0)
-    tx_energy = np.where(tx_rate > 0.0, p * tx_time, 0.0)
-    total_energy = local_energy + tx_energy + baseline * delta
+    local_energy = quantities["local_energy"]
+    tx_energy = quantities["tx_energy"]
+    total_energy = quantities["total_energy"]
     next_B = B - total_energy
     next_Q = Q - l - o + U
 

@@ -4,7 +4,9 @@ from typing import Any, Dict
 
 import numpy as np
 
-from .models import compute_rates, predict_next_temperature, thermal_peak_temperature
+from .config import checker_tolerances
+from .models import (compute_rates, predict_next_temperature, thermal_peak_temperature,
+                     validate_state, validate_arrays, ACTION_FIELDS, slot_quantities)
 
 
 EPS = 1e-12
@@ -20,6 +22,15 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     The check uses the pre-action state and the predicted next temperature from the
     proposed action; it does not re-evaluate the same action on the updated state.
     """
+    tol = checker_tolerances(params)
+    state_validation = validate_state(state, params)
+    action_errors = validate_arrays(action, ACTION_FIELDS, len(params["Q_max"]))
+    if state_validation["status"] != "valid" or action_errors:
+        status = state_validation["status"] if state_validation["status"] != "valid" else "invalid_proposal"
+        return {"feasible": False, "input_status": status,
+                "violations": {"input": state_validation["errors"] or action_errors},
+                "metrics": {}, "predicted_state": None, "predicted_next_state": None,
+                "constraint_residuals": {}, "checker_tolerances": tol}
     Q = np.asarray(state["Q"], dtype=float)
     B = np.asarray(state["B"], dtype=float)
     T = np.asarray(state["T"], dtype=float)
@@ -45,19 +56,18 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     f_hw_max = np.asarray(params["f_hw_max"], dtype=float)
     p_hw_max = np.asarray(params["p_hw_max"], dtype=float)
 
-    queue_work_ok = (l + o <= Q + 1e-9)
-    admit_ok = (U <= A + 1e-9)
+    queue_work_ok = (l + o <= Q + tol["work"])
+    admit_ok = (U <= A + tol["work"]) & (U <= np.asarray(params["A_max"]) + tol["work"])
     nonneg_ok = np.all((l >= 0.0) & (o >= 0.0) & (U >= 0.0) & (f >= 0.0) & (p >= 0.0) & (b >= 0.0) & (f_edge >= 0.0))
-    local_ok = f <= f_hw_max + 1e-9
-    tx_ok = p <= p_hw_max + 1e-9
-    bw_ok = np.sum(b) <= params["shared_bandwidth_hz"] + 1e-9
-    edge_ok = np.sum(f_edge) <= params["shared_edge_cpu_hz"] + 1e-9
+    local_ok = f <= f_hw_max + tol["frequency_hz"]
+    tx_ok = p <= p_hw_max + tol["power_w"]
+    bw_ok = np.sum(b) <= params["shared_bandwidth_hz"] + tol["bandwidth_hz"]
+    edge_ok = np.sum(f_edge) <= params["shared_edge_cpu_hz"] + tol["frequency_hz"]
 
-    rate = compute_rates(g, b, p, N0)
-    t_local = np.divide(c * l, f, out=np.zeros_like(Q), where=f > 0)
-    t_tx = np.divide(d * o, rate, out=np.zeros_like(Q), where=(rate > 0.0) & (o > 0.0))
-    t_edge = np.divide(c * o, f_edge, out=np.zeros_like(Q), where=(f_edge > 0.0) & (o > 0.0))
-    timing_ok = (t_local <= delta + 1e-9) & ((t_tx + t_edge) <= delta + 1e-9)
+    quantities = slot_quantities(state, action, params)
+    rate, t_local, t_tx, t_edge = (quantities[k] for k in
+        ("rate", "local_time", "tx_time", "edge_time"))
+    timing_ok = (t_local <= delta + tol["time_s"]) & ((t_tx + t_edge) <= delta + tol["time_s"])
 
     # Explicitly reject positive work if the required processing resource is absent.
     positive_local = (l > 0.0) & (f <= 0.0)
@@ -66,18 +76,20 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
 
     kappa = np.asarray(params["kappa"], dtype=float)
     baseline = np.asarray(params.get("baseline_power", np.zeros_like(Q)), dtype=float)
-    local_energy = np.where(f > 0.0, kappa * np.power(f, 3.0) * t_local, 0.0)
-    tx_energy = np.where(rate > 0.0, p * t_tx, 0.0)
-    total_energy = local_energy + tx_energy + baseline * delta
+    local_energy = quantities["local_energy"]
+    tx_energy = quantities["tx_energy"]
+    total_energy = quantities["total_energy"]
     battery_after = B - total_energy
-    battery_ok = (battery_after >= B_min - 1e-9)
-    battery_cap_ok = (battery_after <= B_cap + 1e-9)
+    battery_ok = (battery_after >= B_min - tol["energy_j"])
+    battery_cap_ok = (battery_after <= B_cap + tol["energy_j"])
 
     predicted_T = predict_next_temperature(T, action, params)
     predicted_peak_T = thermal_peak_temperature(T, action, params)
-    temp_ok = (predicted_peak_T <= T_max + 1e-9)
+    temp_ok = (predicted_peak_T <= T_max + tol["temperature_c"])
     next_queue = Q - l - o + U
-    queue_cap_ok = (next_queue <= Q_max + 1e-9)
+    queue_cap_ok = (next_queue <= Q_max + tol["work"])
+    queue_lower_ok = next_queue >= -tol["work"]
+    work_bounds_ok = (l <= Q_max + tol["work"]) & (o <= Q_max + tol["work"])
 
     feasible = bool(
         np.all(queue_work_ok)
@@ -93,6 +105,8 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
         and np.all(battery_cap_ok)
         and np.all(temp_ok)
         and np.all(queue_cap_ok)
+        and np.all(queue_lower_ok)
+        and np.all(work_bounds_ok)
     )
 
     metrics = {
@@ -106,8 +120,30 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     }
     report = {
         "feasible": feasible,
+        "input_status": "valid",
+        "verification_scope": "one_step_predicted_zero_model_margin",
+        "checker_tolerances": tol,
+        "constraint_residuals": {
+            "nonnegative_action": {k: np.asarray(action[k]).copy() for k in ACTION_FIELDS},
+            "local_cpu_hz": f_hw_max - f, "transmit_power_w": p_hw_max - p,
+            "shared_bandwidth_hz": float(params["shared_bandwidth_hz"] - np.sum(b)),
+            "shared_edge_cpu_hz": float(params["shared_edge_cpu_hz"] - np.sum(f_edge)),
+            "available_work": Q - l - o, "available_arrivals": A - U,
+            "admission_bound": np.asarray(params["A_max"]) - U,
+            "local_work_bound": Q_max - l, "offload_work_bound": Q_max - o,
+            "local_time_s": delta - t_local, "offload_time_s": delta - t_tx - t_edge,
+            "queue_lower": next_queue, "queue_upper": Q_max - next_queue,
+            "battery_reserve_j": battery_after - B_min,
+            "battery_capacity_j": B_cap - battery_after,
+            "temperature_peak_c": T_max - predicted_peak_T,
+        },
         "violations": {
             "queue": _bad_indices(~queue_work_ok),
+            "queue_lower": _bad_indices(~queue_lower_ok),
+            "work_bounds": _bad_indices(~work_bounds_ok),
+            "local_cpu": _bad_indices(~local_ok),
+            "transmit_power": _bad_indices(~tx_ok),
+            "negative_action": {k: _bad_indices(np.asarray(action[k]) < 0) for k in ACTION_FIELDS},
             "admission": _bad_indices(~admit_ok),
             "timing": _bad_indices(~timing_ok),
             "battery": _bad_indices(~battery_ok),
@@ -142,6 +178,7 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
         "predicted_peak_temperature": predicted_peak_T,
         "predicted_state": {"Q": next_queue, "B": battery_after, "T": predicted_T},
     }
+    report["predicted_next_state"] = report["predicted_state"]
     return report
 
 
@@ -151,6 +188,7 @@ def evaluate_post_transition(
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Verify recorded actual state and transition peak without rerunning prediction."""
+    tol = checker_tolerances(params)
     queue = np.asarray(post_state["Q"], dtype=float)
     battery = np.asarray(post_state["B"], dtype=float)
     temperature = np.asarray(post_state["T"], dtype=float)
@@ -158,12 +196,15 @@ def evaluate_post_transition(
     queue_max = np.asarray(params["Q_max"], dtype=float)
     battery_min = np.asarray(params["B_min"], dtype=float)
     temperature_max = np.asarray(params["T_max"], dtype=float)
-    queue_flag = queue > queue_max + 1e-9
-    battery_flag = battery < battery_min - 1e-9
-    temperature_flag = temperature > temperature_max + 1e-9
-    peak_flag = peak_temperature > temperature_max + 1e-9
+    queue_flag = queue > queue_max + tol["work"]
+    battery_flag = battery < battery_min - tol["energy_j"]
+    temperature_flag = temperature > temperature_max + tol["temperature_c"]
+    peak_flag = peak_temperature > temperature_max + tol["temperature_c"]
     flags = {
         "queue_capacity": _bad_indices(queue_flag),
+        "queue_lower": _bad_indices(queue < -tol["work"]),
+        "battery_capacity": _bad_indices(battery > np.asarray(params["B_cap"]) + tol["energy_j"]),
+        "nonfinite_state": _bad_indices(~(np.isfinite(queue) & np.isfinite(battery) & np.isfinite(temperature) & np.isfinite(peak_temperature))),
         "battery_reserve": _bad_indices(battery_flag),
         "temperature_endpoint": _bad_indices(temperature_flag),
         "temperature_peak": _bad_indices(peak_flag),
