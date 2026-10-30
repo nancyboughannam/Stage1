@@ -103,3 +103,12 @@ search, not CVXPY/OSQP or a globally optimal projection. Every candidate is chec
 independently. Verified idle comes only from FallbackController. Invalid proposals,
 solver failures and fallback reasons remain distinct. See
 [docs/batch_b_filter.md](docs/batch_b_filter.md) for the formulation and limits.
+
+## Batch C experiment logging
+
+Run `python experiments_stage1.py --output experiments_batch_c --horizon 30 --seeds 0 1 2`
+for scripted multi-device trajectories, joint-resource stress, observed weak channels,
+thermal prediction mismatch, reserve exhaustion, and invalid proposals. No trained
+PPO is used. Each run saves state/action/service plots, full JSON traces, a joint-slot
+CSV, configuration provenance, and metrics. See [Batch C documentation](docs/batch_c_experiments.md)
+for metric denominators, provisional service criteria, optional load sweeps, and limitations.

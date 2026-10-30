@@ -5,3 +5,8 @@ __pycache__/
 plots/
 *.egg-info/
 .DS_Store
+/experiments_quick/
+/experiments_batch_c/
+/filter_demo/
+/experiments_quick.zip
+/experiments_batch_c.zip
