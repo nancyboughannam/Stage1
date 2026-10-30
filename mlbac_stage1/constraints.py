@@ -88,7 +88,9 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     temp_ok = (predicted_peak_T <= T_max + tol["temperature_c"])
     next_queue = Q - l - o + U
     queue_cap_ok = (next_queue <= Q_max + tol["work"])
-    queue_lower_ok = next_queue >= -tol["work"]
+    # Physical nonnegativity must agree with validate_state on the next step.
+    # A numerical tolerance must not authorize a negative stored queue.
+    queue_lower_ok = next_queue >= 0.0
     work_bounds_ok = (l <= Q_max + tol["work"]) & (o <= Q_max + tol["work"])
 
     feasible = bool(
@@ -202,7 +204,7 @@ def evaluate_post_transition(
     peak_flag = peak_temperature > temperature_max + tol["temperature_c"]
     flags = {
         "queue_capacity": _bad_indices(queue_flag),
-        "queue_lower": _bad_indices(queue < -tol["work"]),
+        "queue_lower": _bad_indices(queue < 0.0),
         "battery_capacity": _bad_indices(battery > np.asarray(params["B_cap"]) + tol["energy_j"]),
         "nonfinite_state": _bad_indices(~(np.isfinite(queue) & np.isfinite(battery) & np.isfinite(temperature) & np.isfinite(peak_temperature))),
         "battery_reserve": _bad_indices(battery_flag),

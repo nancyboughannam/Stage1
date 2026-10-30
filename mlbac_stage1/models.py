@@ -206,6 +206,7 @@ def transition_metrics(
         any(np.any(~np.isfinite(values)) for values in action_arrays)
         or any(np.any(values < 0.0) for values in action_arrays)
         or np.any(l + o > Q + tol["work"])
+        or np.any(Q - l - o + U < 0.0)
         or np.any(U > np.asarray(state["A"], dtype=float) + tol["work"])
         or np.any(f > np.asarray(params["f_hw_max"], dtype=float) + tol["frequency_hz"])
         or np.any(p > np.asarray(params["p_hw_max"], dtype=float) + tol["power_w"])

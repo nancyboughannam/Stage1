@@ -1,6 +1,6 @@
 # Stage 1: MEC Environment and Safety Diagnostics
 
-This repository contains a configurable mobile edge computing simulator for inspecting slot-level workload, battery, temperature, and channel behavior with a heuristic one-step filter. It does not establish calibrated physical behavior, formal safety guarantees, nearest-safe-action optimization, recursive feasibility, or trained-policy quality. The reference topology is five battery-powered IoT devices sharing one edge server; full details are in [docs/environment_spec.md](docs/environment_spec.md).
+This repository contains a configurable mobile edge computing simulator for inspecting slot-level workload, battery, temperature, and channel behavior with a normalized SLSQP candidate search and independent one-step verification. It does not establish calibrated physical behavior, formal safety guarantees, globally nearest-safe-action guarantees, recursive feasibility, or trained-policy quality. The reference topology is five battery-powered IoT devices sharing one edge server; full details are in [docs/environment_spec.md](docs/environment_spec.md).
 
 ## Setup and checks
 
@@ -44,7 +44,7 @@ python demo_stage1.py
 Each scenario directory contains `config_snapshot.json`, `state.png`, `actions.png`, `episode.csv`, `summary.json`, and `summary.txt`.
 
 - `diagnostics/normal/`: an admissible one-step proposal passes unchanged; the physical transition and its state are observed.
-- `diagnostics/thermal/`: a separately labelled synthetic, hardware-bounded thermal stress proposal is rejected for predicted temperature alone; the current heuristic finds a one-step verified correction. The stress coefficients are not calibrated device data.
+- `diagnostics/thermal/`: a separately labelled synthetic, hardware-bounded thermal stress proposal is rejected for predicted temperature alone; the nonlinear search finds a one-step verified correction. The stress coefficients are not calibrated device data.
 - `diagnostics/battery/`: at `B_min + 0.5 J`, the one-step idle candidate would consume `1 J` of baseline energy and violate reserve. No candidate is verified, nothing is executed, the physical outcome is marked unobserved, and the episode ends with a negative controller-failure reward. This is not proof that the state is mathematically infeasible.
 
 ## Reference demonstration
@@ -86,3 +86,20 @@ where `h = 0.7 f/f_max + 0.3 p/p_max` is dimensionless, `delta` and `tau` are se
 The filter verifies candidates for one step only. A one-step verified idle candidate is not verified safe for the remaining horizon. If no candidate passes, the filter returns no executable action and labels the result `no_verified_candidate_found`; it does not claim mathematical infeasibility. The environment terminates the episode with `controller_failure_no_verified_continuation`, a negative penalty, outstanding work and elapsed time recorded, and actual post-state marked unobserved. An executed transition is checked separately against actual queue, battery, temperature, and recorded endpoint peak; detected actual violations end the episode.
 
 No finite set of passing tests, zero violations in these demonstrations, or stopped simulation proves safety. The simulator uses synthetic/simplified task, queue, energy, radio, and thermal assumptions; its parameters require empirical calibration and validation before any hardware or deployment claim.
+
+
+## Batch B: optimization filter
+
+Run `python filter_demo.py --output filter_demo` for seven controlled filter-only
+examples, including shared bandwidth/CPU projection, coupled timing constraints,
+synthetic thermal stress, reserve exhaustion and an invalid proposal.
+Inspect `filter_demo/summary.txt`, `summary.csv`, and the per-case JSON files.
+No simulator step is executed by this script. Existing diagnostics still execute
+verified actions and check simulated outcomes.
+
+The search uses SciPy SLSQP, normalized physical variables, configurable positive
+component weights, and two deterministic starting points. It is a local nonlinear
+search, not CVXPY/OSQP or a globally optimal projection. Every candidate is checked
+independently. Verified idle comes only from FallbackController. Invalid proposals,
+solver failures and fallback reasons remain distinct. See
+[docs/batch_b_filter.md](docs/batch_b_filter.md) for the formulation and limits.

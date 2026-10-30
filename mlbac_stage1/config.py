@@ -74,6 +74,12 @@ def make_default_params(
     g_base = np.full(n_devices, deterministic_channel_gain, dtype=float)
     params = {
         "checker_tolerances": dict(CHECKER_TOLERANCES),
+        "solver_ftol": 1e-10,
+        "solver_maxiter": 200,
+        "solver_max_starts": 2,
+        "solver_time_budget_s": 2.0,
+        "solver_allocation_guard": 1e-10,
+        "projection_weights": {k: 1.0 for k in ("f", "p", "b", "f_edge", "l", "o", "U")},
         "verification_scope": "one_step_predicted_zero_model_margin",
         "n_devices": n_devices,
         "n_edge_servers": 1,
@@ -139,7 +145,7 @@ def action_metric_settings(params):
     """Derive scales from effective configuration (including scenario overrides).
 
     Zero-range components are fixed at zero and excluded using active masks.
-    No optimizer is enabled by these settings in Batch A.
+    Used by the Batch B local nonlinear projection search.
     """
     n = len(params["Q_max"])
     scales = {
@@ -153,5 +159,11 @@ def action_metric_settings(params):
     }
     if any(v.shape != (n,) or not np.isfinite(v).all() or np.any(v < 0) for v in scales.values()):
         raise ValueError("Action scales must be finite, nonnegative arrays of length N")
-    return {"scales": scales, "weights": {k: np.ones(n) for k in scales},
+    supplied = params.get("projection_weights", {})
+    if set(supplied) - set(scales):
+        raise ValueError("Unknown projection weight")
+    weights = {k: np.full(n, supplied.get(k, 1.0), dtype=float) for k in scales}
+    if any(not np.isfinite(v).all() or np.any(v <= 0) for v in weights.values()):
+        raise ValueError("Projection weights must be finite and positive")
+    return {"scales": scales, "weights": weights,
             "active": {k: v > 0 for k, v in scales.items()}}

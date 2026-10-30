@@ -7,7 +7,7 @@ import numpy as np
 
 from .config import make_default_params
 from .constraints import evaluate_constraints, evaluate_post_transition
-from .models import apply_transition
+from .models import apply_transition, validate_state
 from .safety_filter import SafetyFilter
 
 
@@ -166,6 +166,8 @@ class MBACEnv(gym.Env):
                     if value.shape != (self.n_devices,):
                         raise ValueError(f"reset state {key} must have shape ({self.n_devices},)")
                     self.state[key] = value.copy()
+        if validate_state(self.state, self.params)['status'] == 'invalid_state':
+            raise ValueError("reset received invalid physical state")
         self.last_info = {}
         return self._observation(), {
             "seed": self._last_seed,
@@ -194,18 +196,43 @@ class MBACEnv(gym.Env):
     def step(self, action):
         if self._episode_done:
             raise RuntimeError("step() called after episode termination; call reset() first")
-        raw_action = np.asarray(action, dtype=float).copy()
-        bounded_action = np.clip(raw_action, -1.0, 1.0)
-        self.nominal_action = self._decode_action(raw_action)
+        if validate_state(self.state, self.params)['status'] == 'invalid_state':
+            raise ValueError("Invalid physical state: no action executed")
+        try:
+            raw_action = np.asarray(action, dtype=float).copy()
+            raw_valid = raw_action.shape == self.action_space.shape and np.isfinite(raw_action).all()
+        except (ValueError, TypeError, OverflowError):
+            raw_action = action
+            raw_valid = False
+        bounded_action = np.clip(raw_action, -1.0, 1.0) if raw_valid else None
+        self.nominal_action = self._decode_action(raw_action) if raw_valid else {}
         pre_state = self._copy_state(self.state)
         elapsed_time = self.timestep * float(self.params["delta"])
         filtered = self.filter.filter_action(self.state, self.nominal_action)
-        action_preprocessed = not np.array_equal(raw_action, bounded_action)
+        # Last gate: execute exactly the physical action checked here, without clipping.
+        if filtered["safe"]:
+            final_report = evaluate_constraints(self.state, filtered["action"], self.params)
+            if not final_report["feasible"]:
+                filtered = {**filtered, "safe": False, "action": None,
+                            "status": "final_verification_failed", "report": final_report,
+                            "failure_kind": "final_verification_failed"}
+        self.last_filter_result = filtered
+        action_preprocessed = bool(raw_valid and not np.array_equal(raw_action, bounded_action))
         if action_preprocessed and filtered["safe"] and filtered["status"] == "nominal_accepted":
             filtered["status"] = "preprocessed_candidate_verified"
         chosen = filtered["action"]
         intervention = filtered["status"] != "nominal_accepted"
         base_info = {
+            "proposal_status": filtered.get("proposal_status"),
+            "state_status": filtered.get("state_status"),
+            "solver_status": filtered.get("solver_status"),
+            "selected_solver_status": filtered.get("selected_solver_status"),
+            "solver_attempts": filtered.get("solver_attempts", []),
+            "fallback_reason": filtered.get("fallback_reason"),
+            "fallback_attempted": filtered.get("fallback_attempted", False),
+            "objective_value": filtered.get("objective_value"),
+            "correction_norm": filtered.get("correction_norm"),
+            "safety_claim": filtered.get("safety_claim"),
             "seed": self._last_seed,
             "slot": self.timestep,
             "raw_policy_action": raw_action,
@@ -245,8 +272,9 @@ class MBACEnv(gym.Env):
                 "actual_report": None,
                 "controller_failure": True,
                 "failure_kind": filtered.get("failure_kind", "no_verified_candidate_found"),
-                "failure_reason": "no candidate passed the one-step predicted constraints",
-                "episode_ending_reason": "controller_failure_no_verified_continuation",
+                "failure_reason": filtered.get("failure_kind", "no candidate passed the one-step predicted constraints"),
+                "episode_ending_reason": ("controller_failure_no_verified_continuation"
+                    if filtered["status"] == "no_verified_safe_continuation" else filtered["status"]),
                 "reward": -penalty,
                 "feasible": False,
                 "terminated": terminated,

@@ -52,7 +52,7 @@ The policy action is a normalized vector in $[-1,1]$ with $7N$ values. It is fla
 
 A normalized component $x\in[-1,1]$ maps to $(x+1)/2$ times its configured physical maximum and the optional global `action_scale`. `l` and `o` scale against queue capacity; `U` scales against `A_max`, which is set from the configured maximum arrival amount per slot. Raw policy values, decoded proposal, selected filter candidate, and executed action remain separately available in step info/logs.
 
-The existing model/filter checks nonnegative work; $l_t+o_t\leq Q_t$; $0\leq U_t\leq A_t$; per-device hardware limits; $\sum_i b_i\leq 10^7$ Hz; and $\sum_i f_{edge,i}\leq10^{10}$ cycles/s. Positive local work requires positive CPU and must finish during the slot. Positive offload requires a positive radio path and edge CPU; transmission followed by edge execution must fit in the slot. Local CPU and the offload branch can run in parallel. There is no carry-over edge queue. The existing safety filter is a heuristic action-scaling search, not an optimization solver.
+The existing model/filter checks nonnegative work; $l_t+o_t\leq Q_t$; $0\leq U_t\leq A_t$; per-device hardware limits; $\sum_i b_i\leq 10^7$ Hz; and $\sum_i f_{edge,i}\leq10^{10}$ cycles/s. Positive local work requires positive CPU and must finish during the slot. Positive offload requires a positive radio path and edge CPU; transmission followed by edge execution must fit in the slot. Local CPU and the offload branch can run in parallel. There is no carry-over edge queue. The safety filter uses a normalized local SLSQP search with separate physical-unit verification; see batch_b_filter.md. It does not certify a globally nearest action.
 
 ## Arrivals, Channels, and Random Seeds
 
@@ -93,7 +93,7 @@ The horizon is a finite-horizon task terminal condition: the last successful slo
 The outcomes are distinct:
 
 - `finite_horizon_complete`: the last configured slot completed.
-- `controller_failure_no_verified_continuation`: no one-step candidate was found. Nothing is executed; physical state, slot index, and elapsed physical time do not advance. Actual post-state is unobserved, and outstanding queue/arrival work plus a negative failure reward are recorded. This heuristic search failure is not proof of mathematical infeasibility, and stopping is not evidence of physical recovery.
+- `controller_failure_no_verified_continuation`: no one-step candidate was found. Nothing is executed; physical state, slot index, and elapsed physical time do not advance. Actual post-state is unobserved, and outstanding queue/arrival work plus a negative failure reward are recorded. This local solver/search failure is not proof of mathematical infeasibility, and stopping is not evidence of physical recovery.
 - `actual_constraint_violation`: an action passed prediction and executed, then actual post-transition checks found a queue, battery-reserve, or endpoint-temperature violation.
 
 Verification applies to one step only, not the remaining horizon.
