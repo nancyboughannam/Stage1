@@ -1,1 +1,0 @@
-battery: status=no_verified_safe_continuation; proposal_feasible=False; executed=False; actual_outcome=unobserved; reason=controller_failure_no_verified_continuation

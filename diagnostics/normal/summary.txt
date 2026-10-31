@@ -1,1 +1,0 @@
-normal: status=nominal_accepted; proposal_feasible=True; executed=True; actual_outcome=observed; reason=finite_horizon_complete

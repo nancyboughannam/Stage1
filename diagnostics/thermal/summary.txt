@@ -1,1 +1,0 @@
-thermal: status=corrected_candidate_verified; proposal_feasible=False; executed=True; actual_outcome=observed; reason=finite_horizon_complete

@@ -1,2 +1,0 @@
-seed=2026; slots=300/300; elapsed=300.0 s; ending=finite_horizon_complete; remaining queue=[0.5038614273071289, 0.516086220741272, 0.5192570686340332, 0.5075252652168274, 0.5401713252067566] task-equivalents.
-Scripted nominal policy only; not trained PPO/optimized. Light development run; not a safety or maximum-load result.
