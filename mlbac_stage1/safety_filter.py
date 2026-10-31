@@ -4,7 +4,7 @@ from copy import deepcopy
 from time import perf_counter
 import numpy as np
 
-from .config import action_metric_settings
+from .config import action_metric_settings, safety_margin_settings, safety_verification_scope
 from .constraints import evaluate_constraints
 from .fallback import FallbackController
 from .models import ACTION_FIELDS, validate_arrays, validate_state
@@ -19,6 +19,7 @@ class SafetyFilter:
 
     def __init__(self, params):
         self.params = params
+        safety_margin_settings(params)
         defaults = {'solver_ftol':1e-10, 'solver_maxiter':200, 'solver_max_starts':2,
                     'solver_time_budget_s':2., 'solver_allocation_guard':1e-10}
         for key, value in defaults.items():
@@ -59,7 +60,7 @@ class SafetyFilter:
         common = {'proposal_status':proposal_status, 'state_status':state_status,
                   'nominal_action':original, 'proposal_report':proposal_report,
                   'infeasibility_proven':False, 'verification_scope':'one_step',
-                  'safety_claim':'one_step_predicted_zero_model_margin',
+                  'safety_claim':safety_verification_scope(self.params),
                   'solver_status':'not_run', 'solver_attempts':[], 'solver_elapsed_s':0.,
                   'fallback_reason':None, 'fallback_attempted':False,
                   'objective_value':None, 'correction_norm':None,

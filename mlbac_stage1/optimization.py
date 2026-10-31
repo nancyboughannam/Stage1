@@ -5,7 +5,7 @@ from time import perf_counter
 import numpy as np
 from scipy.optimize import minimize
 
-from .config import action_metric_settings
+from .config import action_metric_settings, safety_margin_thresholds
 from .models import ACTION_FIELDS, compute_rates, predict_next_temperature
 
 
@@ -23,6 +23,7 @@ class ProjectionProblem:
     def __init__(self, state, nominal, params):
         self.state, self.params = state, params
         self.n = len(params['Q_max'])
+        self.margins, self.temperature_threshold, self.battery_threshold = safety_margin_thresholds(params)
         metric = action_metric_settings(params)
         self.scales = np.column_stack([metric['scales'][k] for k in ACTION_FIELDS])
         self.weights = np.column_stack([metric['weights'][k] for k in ACTION_FIELDS])
@@ -62,12 +63,14 @@ class ProjectionProblem:
         # Auxiliary tx duration bounds real tx duration from above.
         energy = np.asarray(p['kappa']) * c * l * f**2 + power*tx + np.asarray(p['baseline_power'])*dt
         budget = np.asarray(s['B']) - np.asarray(p['B_min'])
+        battery_target = self.battery_threshold if self.margins['enabled'] else np.asarray(p['B_min'])
+        temperature_target = self.temperature_threshold if self.margins['enabled'] else np.asarray(p['T_max'])
         next_q = np.asarray(s['Q']) - l - o + u
         next_t = predict_next_temperature(s['T'], a, p)
         bw, cpu = float(p['shared_bandwidth_hz']), float(p['shared_edge_cpu_hz'])
         # Tiny inward target for allocation sums, not a physical model-error margin.
         guard = float(p['solver_allocation_guard'])
-        return np.concatenate([
+        residuals = [
             np.atleast_1d((bw*(1-guard)-sum(b))/max(bw, 1.)),
             np.atleast_1d((cpu*(1-guard)-sum(fe))/max(cpu, 1.)),
             (np.asarray(s['Q'])-l-o)/qscale,
@@ -77,9 +80,13 @@ class ProjectionProblem:
             (rate*tx-d*o)/np.maximum(d*qscale, 1.),
             (fe*edge-c*o)/np.maximum(c*qscale, 1.),
             (dt-tx-edge)/dt,
-            (budget-energy)/np.maximum(np.abs(budget),1.),
-            (np.asarray(p['T_max'])-next_t)/100.,
-        ])
+            (np.asarray(s['B'])-energy-battery_target)/np.maximum(np.abs(budget),1.)
+                if self.margins['enabled'] else (budget-energy)/np.maximum(np.abs(budget),1.),
+            (temperature_target-next_t)/100.,
+        ]
+        if self.margins['enabled']:
+            residuals.append((np.asarray(p['T_max'])-np.asarray(s['T']))/100.)
+        return np.concatenate(residuals)
 
     def starts(self):
         x = np.concatenate((np.clip(self.reference, 0., 1.), np.full(2*self.n, .5)))

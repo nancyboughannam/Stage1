@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 import numpy as np
 
-from .config import checker_tolerances
+from .config import checker_tolerances, safety_margin_thresholds, safety_verification_scope
 from .models import (compute_rates, predict_next_temperature, thermal_peak_temperature,
                      validate_state, validate_arrays, ACTION_FIELDS, slot_quantities)
 
@@ -23,6 +23,7 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     proposed action; it does not re-evaluate the same action on the updated state.
     """
     tol = checker_tolerances(params)
+    margins, temperature_threshold, battery_threshold = safety_margin_thresholds(params)
     state_validation = validate_state(state, params)
     action_errors = validate_arrays(action, ACTION_FIELDS, len(params["Q_max"]))
     if state_validation["status"] != "valid" or action_errors:
@@ -86,6 +87,10 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     predicted_T = predict_next_temperature(T, action, params)
     predicted_peak_T = thermal_peak_temperature(T, action, params)
     temp_ok = (predicted_peak_T <= T_max + tol["temperature_c"])
+    temperature_margin_ok = (T <= T_max) & (predicted_T <= temperature_threshold)
+    battery_margin_ok = battery_after >= battery_threshold
+    selected_temp_ok = temperature_margin_ok if margins["enabled"] else temp_ok
+    selected_battery_ok = battery_margin_ok if margins["enabled"] else battery_ok
     next_queue = Q - l - o + U
     queue_cap_ok = (next_queue <= Q_max + tol["work"])
     # Physical nonnegativity must agree with validate_state on the next step.
@@ -103,9 +108,9 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
         and edge_ok
         and np.all(timing_ok)
         and np.all(resource_ok)
-        and np.all(battery_ok)
+        and np.all(selected_battery_ok)
         and np.all(battery_cap_ok)
-        and np.all(temp_ok)
+        and np.all(selected_temp_ok)
         and np.all(queue_cap_ok)
         and np.all(queue_lower_ok)
         and np.all(work_bounds_ok)
@@ -123,8 +128,24 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
     report = {
         "feasible": feasible,
         "input_status": "valid",
-        "verification_scope": "one_step_predicted_zero_model_margin",
+        "verification_scope": safety_verification_scope(params),
         "checker_tolerances": tol,
+        "safety_margins": margins,
+        "margin_checks": {
+            "predicted_temperature_c": predicted_T.copy(),
+            "predicted_battery_j": battery_after.copy(),
+            "ordinary_temperature_endpoint_slack_c": T_max - predicted_T,
+            "ordinary_battery_slack_j": battery_after - B_min,
+            "tightened_temperature_slack_c": T_max - predicted_T - margins["effective_temperature_margin_c"],
+            "tightened_battery_slack_j": battery_after - B_min - margins["effective_battery_margin_j"],
+            "temperature_threshold_c": temperature_threshold,
+            "battery_threshold_j": battery_threshold,
+            "ordinary_temperature_pass": temp_ok,
+            "ordinary_battery_pass": battery_ok,
+            "current_temperature_hard_limit_pass": T <= T_max,
+            "margin_temperature_pass": temperature_margin_ok if margins["enabled"] else None,
+            "margin_battery_pass": battery_margin_ok if margins["enabled"] else None,
+        },
         "constraint_residuals": {
             "nonnegative_action": {k: np.asarray(action[k]).copy() for k in ACTION_FIELDS},
             "local_cpu_hz": f_hw_max - f, "transmit_power_w": p_hw_max - p,
@@ -155,6 +176,8 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
             "queue_overflow": _bad_indices(~queue_cap_ok),
             "battery_overflow": _bad_indices(~battery_cap_ok),
             "thermal_violation": _bad_indices(~temp_ok),
+            "temperature_margin": _bad_indices(~temperature_margin_ok) if margins["enabled"] else [],
+            "battery_margin": _bad_indices(~battery_margin_ok) if margins["enabled"] else [],
             "resource_absence": _bad_indices(~resource_ok),
             "work_without_frequency": _bad_indices(positive_local),
             "work_without_transmission": _bad_indices(positive_tx),

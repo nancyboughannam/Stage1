@@ -24,6 +24,49 @@ def checker_tolerances(params):
     return values
 
 
+
+def safety_margin_settings(params):
+    """Validate scalar or (N,) buffers, including when disabled; never mutate input."""
+    enabled = params.get("safety_margin_enabled", False)
+    if not isinstance(enabled, (bool, np.bool_)):
+        raise ValueError("safety_margin_enabled must be a boolean")
+    n = len(params["Q_max"])
+    result = {"enabled": bool(enabled)}
+    for key in ("temperature_margin_c", "battery_margin_j"):
+        try:
+            value = np.asarray(params.get(key, 0.0), dtype=float)
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise ValueError(f"{key} must be a finite nonnegative scalar or shape ({n},)") from exc
+        if value.ndim == 0:
+            value = np.full(n, float(value))
+        if value.shape != (n,) or not np.isfinite(value).all() or np.any(value < 0):
+            raise ValueError(f"{key} must be a finite nonnegative scalar or shape ({n},)")
+        result[key] = value.copy()
+        result["effective_" + key] = value.copy() if enabled else np.zeros(n)
+    return result
+
+
+def safety_margin_thresholds(params):
+    """One representable float inward; no outward checker tolerance in margin mode.
+
+    Saturate only an unrepresentable battery threshold to +inf (no candidate
+    can satisfy it). Margins themselves must always be finite.
+    """
+    settings = safety_margin_settings(params)
+    with np.errstate(over="ignore"):
+        temperature = np.asarray(params["T_max"]) - settings["effective_temperature_margin_c"]
+        battery = np.asarray(params["B_min"]) + settings["effective_battery_margin_j"]
+        if settings["enabled"]:
+            temperature = np.nextafter(temperature, -np.inf)
+            battery = np.nextafter(battery, np.inf)
+    return settings, temperature, battery
+
+
+def safety_verification_scope(params):
+    return ("one_step_predicted_with_model_margins" if safety_margin_settings(params)["enabled"]
+            else "one_step_predicted_zero_model_margin")
+
+
 def make_default_params(
     n_devices: int = 5,
     *,
@@ -39,6 +82,9 @@ def make_default_params(
     initial_queue_work_units: float = 1.0,
     initial_battery_fraction: float = 0.8,
     initial_temperature_c: float = 30.0,
+    safety_margin_enabled: bool = False,
+    temperature_margin_c: Any = 0.0,
+    battery_margin_j: Any = 0.0,
 ) -> Dict[str, Any]:
     numeric = (delta, arrival_min_per_slot, arrival_max_per_slot,
                deterministic_arrival_per_slot, channel_gain_min, channel_gain_max,
@@ -74,6 +120,9 @@ def make_default_params(
     g_base = np.full(n_devices, deterministic_channel_gain, dtype=float)
     params = {
         "checker_tolerances": dict(CHECKER_TOLERANCES),
+        "safety_margin_enabled": safety_margin_enabled,
+        "temperature_margin_c": temperature_margin_c,
+        "battery_margin_j": battery_margin_j,
         "solver_ftol": 1e-10,
         "solver_maxiter": 200,
         "solver_max_starts": 2,
@@ -130,6 +179,8 @@ def make_default_params(
             "thermal_tau": "provisional_uncalibrated",
         },
     }
+    safety_margin_settings(params)
+    params["verification_scope"] = safety_verification_scope(params)
     return params
 
 

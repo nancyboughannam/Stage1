@@ -15,8 +15,12 @@ from reference_demo import scripted_nominal_action
 SCENARIOS = ('reference', 'resource_pressure', 'weak_channel', 'thermal_matched', 'thermal_mismatch', 'battery', 'invalid_proposal')
 
 
-def build_env(scenario, devices, horizon, seed, load):
-    p = make_default_params(devices, horizon=horizon)
+def build_env(scenario, devices, horizon, seed, load, *, safety_margin_enabled=False,
+              temperature_margin_c=0., battery_margin_j=0.):
+    p = make_default_params(devices, horizon=horizon,
+                            safety_margin_enabled=safety_margin_enabled,
+                            temperature_margin_c=temperature_margin_c,
+                            battery_margin_j=battery_margin_j)
     # Fixed admission/action range across the supported load sweep (0 < load <= 2).
     p['A_max'] = np.full(devices, 4.)
     p['arrival_max_per_slot'] = 2. * load
@@ -106,9 +110,12 @@ def plots(output, records, rows, config, initial):
     fig.tight_layout(); fig.savefig(output/'actions.png',dpi=140); plt.close(fig)
 
 
-def run_episode(output, scenario, seed, devices=5, horizon=30, load=1., max_rejection=.2, min_throughput=.5, make_plots=True):
+def run_episode(output, scenario, seed, devices=5, horizon=30, load=1., max_rejection=.2, min_throughput=.5, make_plots=True, *,
+                safety_margin_enabled=False, temperature_margin_c=0., battery_margin_j=0.):
     output = Path(output); output.mkdir(parents=True, exist_ok=True)
-    env, reset = build_env(scenario, devices, horizon, seed, load)
+    env, reset = build_env(scenario, devices, horizon, seed, load,
+                           safety_margin_enabled=safety_margin_enabled,
+                           temperature_margin_c=temperature_margin_c, battery_margin_j=battery_margin_j)
     initial = env._copy_state(env.state)
     records, rows = [], []
     try:
@@ -151,7 +158,12 @@ def main():
     parser.add_argument('--loads',nargs='+',type=float,default=[1.])
     parser.add_argument('--max-rejection',type=float,default=.2)
     parser.add_argument('--min-throughput',type=float,default=.5)
+    parser.add_argument('--safety-margin-enabled', action='store_true')
+    parser.add_argument('--temperature-margin-c', type=float, default=0.)
+    parser.add_argument('--battery-margin-j', type=float, default=0.)
     args=parser.parse_args()
+    if any(not np.isfinite(x) or x < 0 for x in (args.temperature_margin_c, args.battery_margin_j)):
+        parser.error('margins must be finite and nonnegative')
     if args.devices<1 or args.horizon<1 or any(not 0<x<=2 for x in args.loads):
         parser.error('devices/horizon must be positive; loads must be in (0,2].')
     if len(set(args.seeds))!=len(args.seeds) or any(s<0 for s in args.seeds):
@@ -165,7 +177,10 @@ def main():
             name=f'{scenario}/load_{load:g}'
             summaries=[]
             for seed in args.seeds:
-                s=run_episode(root/name/f'seed_{seed}',scenario,seed,args.devices,args.horizon,load,args.max_rejection,args.min_throughput)
+                s=run_episode(root/name/f'seed_{seed}',scenario,seed,args.devices,args.horizon,load,args.max_rejection,args.min_throughput,
+                              safety_margin_enabled=args.safety_margin_enabled,
+                              temperature_margin_c=args.temperature_margin_c,
+                              battery_margin_j=args.battery_margin_j)
                 summaries.append(s)
                 print(f"{name} seed={seed}: {s['executed_slots']}/{args.horizon} slots; {s['ending_reason']}",flush=True)
             groups[name]=aggregate(summaries)

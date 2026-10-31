@@ -112,3 +112,18 @@ thermal prediction mismatch, reserve exhaustion, and invalid proposals. No train
 PPO is used. Each run saves state/action/service plots, full JSON traces, a joint-slot
 CSV, configuration provenance, and metrics. See [Batch C documentation](docs/batch_c_experiments.md)
 for metric denominators, provisional service criteria, optional load sweeps, and limitations.
+
+## Opt-in prediction margins (new Batch 1)
+
+Thermal (Celsius) and battery (joule) margins can now tighten one-step predictions
+consistently across the nominal check, SLSQP search, candidate verification,
+idle fallback and final execution gate. Defaults remain disabled with zero buffers.
+
+```bash
+python -m pytest -q
+python experiments_stage1.py --output experiments_margins_batch1 --scenarios reference thermal_matched battery --seeds 0 --devices 1 --horizon 3 --safety-margin-enabled --temperature-margin-c 2 --battery-margin-j 0.2
+```
+
+See [model uncertainty and margins](docs/model_uncertainty_and_margins.md) for exact
+inequalities, logging, limits and the remaining batches, and the
+[Batch 1 report](docs/batch1_report.md) for actual validation results.

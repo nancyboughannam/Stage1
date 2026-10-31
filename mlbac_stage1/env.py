@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import gymnasium as gym
 import numpy as np
 
-from .config import make_default_params
+from .config import make_default_params, safety_margin_settings, safety_verification_scope
 from .constraints import evaluate_constraints, evaluate_post_transition
 from .models import apply_transition, validate_state
 from .safety_filter import SafetyFilter
@@ -191,6 +191,11 @@ class MBACEnv(gym.Env):
             elif isinstance(value, (str, int, float, bool)) or value is None:
                 result[key] = value
         result.update({"n_devices": self.n_devices, "n_edge_servers": 1, "horizon": self.horizon})
+        margins = safety_margin_settings(self.params)
+        result["safety_margin_settings"] = {
+            key: value.tolist() if isinstance(value, np.ndarray) else value
+            for key, value in margins.items()}
+        result["verification_scope"] = safety_verification_scope(self.params)
         return result
 
     def step(self, action):
@@ -212,6 +217,8 @@ class MBACEnv(gym.Env):
         # Last gate: execute exactly the physical action checked here, without clipping.
         if filtered["safe"]:
             final_report = evaluate_constraints(self.state, filtered["action"], self.params)
+            if final_report["feasible"]:
+                filtered = {**filtered, "report": final_report}
             if not final_report["feasible"]:
                 filtered = {**filtered, "safe": False, "action": None,
                             "status": "final_verification_failed", "report": final_report,
