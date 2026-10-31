@@ -199,6 +199,7 @@ def evaluate_constraints(state: Dict[str, np.ndarray], action: Dict[str, np.ndar
             },
         },
         "metrics": metrics,
+        "predicted_energy_j": total_energy.copy(),
         "predicted_temperature": predicted_T,
         "predicted_peak_temperature": predicted_peak_T,
         "predicted_state": {"Q": next_queue, "B": battery_after, "T": predicted_T},

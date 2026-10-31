@@ -14,6 +14,7 @@ import numpy as np
 
 from mlbac_stage1.config import make_default_params
 from mlbac_stage1.env import make_env
+from mlbac_stage1.experiment_logging import device_prediction_records, write_csv
 
 
 ACTION_KEYS = ("f", "p", "b", "f_edge", "l", "o", "U")
@@ -267,11 +268,13 @@ def run_scenario(name: str, output_root: Path, seed: int = 0) -> Path:
         "scenario": name,
         "seed": seed,
         "effective_config": reset_info["effective_config"],
+        "simulator_only_config": reset_info["simulator_only_config"],
         "initial_state": {key: np.asarray(value, dtype=float).tolist() for key, value in initial_state.items()},
         "description": description,
     }
     (directory / "config_snapshot.json").write_text(json.dumps(_json_safe(config_snapshot), indent=2, sort_keys=True) + "\n")
     _write_csv(directory / "episode.csv", name, seed, info, params)
+    write_csv(directory / "prediction_errors.csv", device_prediction_records(info))
     _write_plots(directory, name, initial_state, params, info)
     executed = info["executed_action"]
     summary = {

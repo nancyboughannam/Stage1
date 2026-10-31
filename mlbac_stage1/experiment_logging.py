@@ -4,6 +4,7 @@ import csv
 import json
 from pathlib import Path
 import numpy as np
+from .model_uncertainty import COMPARISON_FIELDS
 
 
 def json_ready(value):
@@ -57,6 +58,9 @@ def slot_record(info, result):
                energy_j=float(np.sum(metrics['energy'])) if executed else None,
                admission_change_work=(float(np.sum(np.asarray(info['executed_action']['U']) - np.asarray(proposal['U'])))
                    if executed and 'U' in proposal else None))
+    comparison = info.get('prediction_errors')
+    row['predicted_energy_j'] = float(np.sum(comparison['predicted_energy_j'])) if executed and comparison else None
+    row['energy_prediction_error_j'] = float(np.sum(comparison['energy_error_j'])) if executed and comparison else None
     for key in ('queue_capacity', 'queue_lower', 'battery_capacity', 'nonfinite_state',
                 'battery_reserve', 'temperature_endpoint', 'temperature_peak'):
         row['actual_' + key + '_violating_devices'] = None
@@ -144,3 +148,23 @@ def aggregate(summaries):
     return {'metrics':result, 'n_episodes':len(summaries),
             'acceptable_episode_count':sum(s['service_acceptable_under_provisional_criteria'] for s in summaries),
             'note':'Approximate t intervals across seeds; small samples and early stops limit interpretation. Undefined metrics are excluded and counts reported.'}
+
+
+def device_prediction_records(info):
+    """One row per device/attempt; absent execution remains blank in CSV."""
+    report = info['prediction_errors']
+    margins = report['safety_margins']
+    rows = []
+    for device in range(len(info['pre_state']['Q'])):
+        row = {'slot': info['slot'], 'device': device,
+               'executed': info['executed_action'] is not None,
+               'filter_status': info['filter_status'],
+               'safety_margin_enabled': margins['enabled']}
+        for key in COMPARISON_FIELDS:
+            value = report[key]
+            row[key] = None if value is None else np.asarray(value)[device].item()
+        for key in ('temperature_margin_c', 'battery_margin_j',
+                    'effective_temperature_margin_c', 'effective_battery_margin_j'):
+            row[key] = np.asarray(margins[key])[device].item()
+        rows.append(row)
+    return rows

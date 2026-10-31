@@ -127,3 +127,23 @@ python experiments_stage1.py --output experiments_margins_batch1 --scenarios ref
 See [model uncertainty and margins](docs/model_uncertainty_and_margins.md) for exact
 inequalities, logging, limits and the remaining batches, and the
 [Batch 1 report](docs/batch1_report.md) for actual validation results.
+
+
+## Simulator-only model mismatch (Batch 2)
+
+`actual_energy_multiplier` scales the simulated device energy (default 1.0)
+without changing controller predictions. The existing actual-only thermal
+coefficient override is retained. Logs now include per-device temperature,
+battery and energy errors, with explicit margin-coverage flags and null values
+for unexecuted attempts.
+
+```bash
+python -m pytest -q
+python mismatch_diagnostics.py --output experiments_mismatch_batch2/controlled --seed 0
+```
+
+The controlled diagnostics include errors both within and beyond illustrative
+margins. Simulated violations in the deliberately exceeded-error cases are
+expected. See [model uncertainty and margins](docs/model_uncertainty_and_margins.md)
+for configuration, experiment commands, exact definitions and actual test results.
+The paired multi-seed benchmark and extended runtime reporting remain for Batch 3.

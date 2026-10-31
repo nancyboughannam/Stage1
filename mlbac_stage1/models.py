@@ -6,6 +6,7 @@ from typing import Any, Dict
 import numpy as np
 
 from .config import checker_tolerances
+from .model_uncertainty import nonnegative_scalar
 
 
 EPS = 1e-12
@@ -167,6 +168,7 @@ def transition_metrics(
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Compute actual slot metrics after validating physical executability."""
+    multiplier = nonnegative_scalar(params.get("actual_energy_multiplier", 1.0), "actual_energy_multiplier")
     state_report = validate_state(state, params)
     if state_report["status"] == "invalid_state":
         raise ValueError("Invalid physical state")
@@ -221,9 +223,12 @@ def transition_metrics(
     if action_invalid:
         raise ValueError("Action is not physically executable in this slot")
 
-    local_energy = quantities["local_energy"]
-    tx_energy = quantities["tx_energy"]
-    total_energy = quantities["total_energy"]
+    # Scale every device-energy component, including ongoing idle consumption.
+    # Nominal slot_quantities and the thermal equation remain unchanged.
+    local_energy = quantities["local_energy"] * multiplier
+    tx_energy = quantities["tx_energy"] * multiplier
+    baseline_energy = quantities["baseline_energy"] * multiplier
+    total_energy = local_energy + tx_energy + baseline_energy
     next_B = B - total_energy
     next_Q = Q - l - o + U
 
@@ -243,7 +248,10 @@ def transition_metrics(
         "total_energy": total_energy,
         "local_energy": local_energy,
         "tx_energy": tx_energy,
-        "baseline_energy": baseline * delta,
+        "baseline_energy": baseline_energy,
+        "predicted_energy_j": quantities["total_energy"].copy(),
+        "energy_prediction_error_j": total_energy - quantities["total_energy"],
+        "actual_energy_multiplier": multiplier,
         "completed_local_work": l.copy(),
         "completed_offload_work": o.copy(),
         "rejected_arrivals": np.maximum(0.0, np.asarray(state["A"], dtype=float) - U),

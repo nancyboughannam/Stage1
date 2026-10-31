@@ -9,14 +9,15 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mlbac_stage1.config import make_default_params
 from mlbac_stage1.env import make_env
-from mlbac_stage1.experiment_logging import write_json, write_csv, slot_record, summarize, aggregate
+from mlbac_stage1.experiment_logging import write_json, write_csv, slot_record, summarize, aggregate, device_prediction_records
 from reference_demo import scripted_nominal_action
 
 SCENARIOS = ('reference', 'resource_pressure', 'weak_channel', 'thermal_matched', 'thermal_mismatch', 'battery', 'invalid_proposal')
 
 
 def build_env(scenario, devices, horizon, seed, load, *, safety_margin_enabled=False,
-              temperature_margin_c=0., battery_margin_j=0.):
+              temperature_margin_c=0., battery_margin_j=0.,
+              actual_energy_multiplier=1., actual_thermal_alpha=None):
     p = make_default_params(devices, horizon=horizon,
                             safety_margin_enabled=safety_margin_enabled,
                             temperature_margin_c=temperature_margin_c,
@@ -31,6 +32,9 @@ def build_env(scenario, devices, horizon, seed, load, *, safety_margin_enabled=F
         p['initial_temperature_c'] = 79.
         if scenario == 'thermal_mismatch':
             p['actual_thermal_alpha'] = 90.
+    p["actual_energy_multiplier"] = actual_energy_multiplier
+    if actual_thermal_alpha is not None:
+        p["actual_thermal_alpha"] = actual_thermal_alpha
     env = make_env(params=p)
     options = None
     if scenario == 'battery':
@@ -111,11 +115,13 @@ def plots(output, records, rows, config, initial):
 
 
 def run_episode(output, scenario, seed, devices=5, horizon=30, load=1., max_rejection=.2, min_throughput=.5, make_plots=True, *,
-                safety_margin_enabled=False, temperature_margin_c=0., battery_margin_j=0.):
+                safety_margin_enabled=False, temperature_margin_c=0., battery_margin_j=0.,
+              actual_energy_multiplier=1., actual_thermal_alpha=None):
     output = Path(output); output.mkdir(parents=True, exist_ok=True)
     env, reset = build_env(scenario, devices, horizon, seed, load,
                            safety_margin_enabled=safety_margin_enabled,
-                           temperature_margin_c=temperature_margin_c, battery_margin_j=battery_margin_j)
+                           temperature_margin_c=temperature_margin_c, battery_margin_j=battery_margin_j,
+                           actual_energy_multiplier=actual_energy_multiplier, actual_thermal_alpha=actual_thermal_alpha)
     initial = env._copy_state(env.state)
     records, rows = [], []
     try:
@@ -131,6 +137,7 @@ def run_episode(output, scenario, seed, devices=5, horizon=30, load=1., max_reje
         write_json(output/'config_snapshot.json', {
             'controller_config':reset['effective_config'], 'initial_state':initial,
             'simulator_only_actual_thermal_alpha':env._actual_thermal_alpha,
+            'simulator_only_config':reset['simulator_only_config'],
             'seed':seed, 'scenario':scenario, 'load_multiplier':load,
             'service_criteria':summary['criteria'], 'python':platform.python_version(),
             'versions':{k:importlib.metadata.version(k) for k in ('numpy','scipy','gymnasium')},
@@ -141,6 +148,8 @@ def run_episode(output, scenario, seed, devices=5, horizon=30, load=1., max_reje
         # Full per-device arrays, all residuals, raw/decoded/selected/executed actions and solver attempts.
         write_json(output/'steps.json', records)
         write_csv(output/'slots.csv', rows)
+        write_csv(output/'prediction_errors.csv', [row for record in records
+            for row in device_prediction_records(record['info'])])
         write_json(output/'summary.json', summary)
         if make_plots: plots(output, records, rows, env.params, initial)
         return summary
@@ -161,7 +170,12 @@ def main():
     parser.add_argument('--safety-margin-enabled', action='store_true')
     parser.add_argument('--temperature-margin-c', type=float, default=0.)
     parser.add_argument('--battery-margin-j', type=float, default=0.)
+    parser.add_argument('--actual-energy-multiplier', type=float, default=1.)
+    parser.add_argument('--actual-thermal-alpha', type=float, default=None)
     args=parser.parse_args()
+    for value in (args.actual_energy_multiplier, args.actual_thermal_alpha):
+        if value is not None and (not np.isfinite(value) or value < 0):
+            parser.error('simulator mismatch settings must be finite and nonnegative')
     if any(not np.isfinite(x) or x < 0 for x in (args.temperature_margin_c, args.battery_margin_j)):
         parser.error('margins must be finite and nonnegative')
     if args.devices<1 or args.horizon<1 or any(not 0<x<=2 for x in args.loads):
@@ -180,7 +194,9 @@ def main():
                 s=run_episode(root/name/f'seed_{seed}',scenario,seed,args.devices,args.horizon,load,args.max_rejection,args.min_throughput,
                               safety_margin_enabled=args.safety_margin_enabled,
                               temperature_margin_c=args.temperature_margin_c,
-                              battery_margin_j=args.battery_margin_j)
+                              battery_margin_j=args.battery_margin_j,
+                              actual_energy_multiplier=args.actual_energy_multiplier,
+                              actual_thermal_alpha=args.actual_thermal_alpha)
                 summaries.append(s)
                 print(f"{name} seed={seed}: {s['executed_slots']}/{args.horizon} slots; {s['ending_reason']}",flush=True)
             groups[name]=aggregate(summaries)

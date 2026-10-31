@@ -9,6 +9,7 @@ from .config import make_default_params, safety_margin_settings, safety_verifica
 from .constraints import evaluate_constraints, evaluate_post_transition
 from .models import apply_transition, validate_state
 from .safety_filter import SafetyFilter
+from .model_uncertainty import nonnegative_scalar, prediction_error_report
 
 
 ACTION_COMPONENTS = ("f", "p", "b", "f_edge", "l", "o", "U")
@@ -46,6 +47,10 @@ class MBACEnv(gym.Env):
         if self.n_devices != resolved_devices:
             raise ValueError("n_devices must match the supplied parameter arrays")
         self._actual_thermal_alpha = self.params.pop("actual_thermal_alpha", None)
+        if self._actual_thermal_alpha is not None:
+            self._actual_thermal_alpha = nonnegative_scalar(self._actual_thermal_alpha, "actual_thermal_alpha")
+        self._actual_energy_multiplier = nonnegative_scalar(
+            self.params.pop("actual_energy_multiplier", 1.0), "actual_energy_multiplier")
         if deterministic is not None:
             self.params["deterministic"] = bool(deterministic)
         self.horizon = int(self.params.get("horizon", 300)) if horizon is None else int(horizon)
@@ -172,6 +177,7 @@ class MBACEnv(gym.Env):
         return self._observation(), {
             "seed": self._last_seed,
             "effective_config": self.effective_config(),
+            "simulator_only_config": self.simulator_config(),
             "physical_state": self._copy_state(self.state),
         }
 
@@ -197,6 +203,15 @@ class MBACEnv(gym.Env):
             for key, value in margins.items()}
         result["verification_scope"] = safety_verification_scope(self.params)
         return result
+
+    def simulator_config(self):
+        """Provenance only; not passed to the policy/filter prediction model."""
+        return {
+            "actual_energy_multiplier": self._actual_energy_multiplier,
+            "actual_thermal_alpha_override": self._actual_thermal_alpha,
+            "effective_actual_thermal_alpha": (float(self.params["thermal_alpha"])
+                if self._actual_thermal_alpha is None else self._actual_thermal_alpha),
+        }
 
     def step(self, action):
         if self._episode_done:
@@ -277,6 +292,7 @@ class MBACEnv(gym.Env):
                 "post_state": None,
                 "transition_metrics": None,
                 "actual_report": None,
+                "prediction_errors": prediction_error_report(None, None, None, self.params),
                 "controller_failure": True,
                 "failure_kind": filtered.get("failure_kind", "no_verified_candidate_found"),
                 "failure_reason": filtered.get("failure_kind", "no candidate passed the one-step predicted constraints"),
@@ -292,9 +308,9 @@ class MBACEnv(gym.Env):
             return self._observation(), -penalty, terminated, truncated, info
 
         self.executed_action = chosen
-        transition_params = self.params
+        transition_params = {**self.params, "actual_energy_multiplier": self._actual_energy_multiplier}
         if self._actual_thermal_alpha is not None:
-            transition_params = {**self.params, "actual_thermal_alpha": self._actual_thermal_alpha}
+            transition_params["actual_thermal_alpha"] = self._actual_thermal_alpha
         next_state = apply_transition(self.state, chosen, transition_params)
         next_index = self.timestep + 1
         next_state["A"] = self._arrival_trace[next_index].copy()
@@ -319,6 +335,7 @@ class MBACEnv(gym.Env):
             "post_state": self._copy_state(self.state),
             "transition_metrics": self.state["metrics"],
             "actual_report": actual_report,
+            "prediction_errors": prediction_error_report(filtered["report"], self.state, self.state["metrics"], self.params),
             "controller_failure": False,
             "failure_kind": None,
             "failure_reason": None,
